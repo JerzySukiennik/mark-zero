@@ -1,0 +1,64 @@
+<!doctype html><meta charset=utf8><title>critic rig 2</title>
+<style>body{margin:0;background:#111;color:#0f0;font:12px monospace}iframe{width:1600px;height:1000px;border:0}</style>
+<pre id=log>booting…</pre>
+<iframe id=f src="/?mzdemo=1"></iframe>
+<script type="module">
+const L = document.getElementById('log');
+const log = m => { L.textContent += '\n' + m; };
+const save = (n,u) => fetch('http://localhost:8799/',{method:'POST',body:n+'\n'+u}).then(r=>r.status);
+const F = document.getElementById('f');
+await save('_rig2_started.txt','data:text/plain;base64,c3RhcnQ=');
+if (!(F.contentDocument && F.contentDocument.readyState==='complete')) await new Promise(r => F.addEventListener('load', r, {once:true}));
+const W = F.contentWindow;
+for (let i=0;i<200 && typeof W.MZ!=='object';i++) await new Promise(r=>setTimeout(r,300));
+const MZ = W.MZ, c = MZ.ctx, T = c.THREE;
+const shot = async (n,w=1500,h=900) => { await save(n, MZ.shot(w,h)); log('saved '+n); };
+const dump = async () => { await save('_rig2_log.txt','data:text/plain;base64,'+btoa(unescape(encodeURIComponent(L.textContent)))); };
+try {
+log('selfTest ok=' + MZ.selfTest().ok);
+// demo rig position
+const entries = Array.from(c.destruction.entries || []);
+log('breakables=' + entries.length);
+const named = entries.map(e => (e.mesh||e.object||{}).name + ':' + (e.type||'?'));
+log('names=' + named.slice(0,40).join(', '));
+const byName = n => entries.find(e => ((e.mesh||e.object||{}).name||'')===n);
+const g = entries.find(e => /glass/.test(((e.mesh||e.object||{}).name)||''));
+const post = entries.find(e => (e.type||'')==='post');
+const wall = entries.find(e => (e.type||'')==='wall');
+window.__e = {g,post,wall};
+const bb = e => { const m=e.mesh||e.object; const b=new T.Box3().setFromObject(m); return {c:b.getCenter(new T.Vector3()), s:b.getSize(new T.Vector3()), min:b.min.clone()}; };
+if (g) { const B=bb(g); log('glass '+(g.mesh||g.object).name+' c='+B.c.toArray().map(x=>x.toFixed(1))+' s='+B.s.toArray().map(x=>x.toFixed(1))); }
+if (post) { const B=bb(post); log('post c='+B.c.toArray().map(x=>x.toFixed(1))+' s='+B.s.toArray().map(x=>x.toFixed(1))); }
+if (wall) { const B=bb(wall); log('wall c='+B.c.toArray().map(x=>x.toFixed(1))+' s='+B.s.toArray().map(x=>x.toFixed(1))); }
+
+// run the scripted demo timeline and snapshot beats
+const G = bb(g);
+const front = new T.Vector3(G.c.x+1.0, G.c.y+0.6, G.c.z+9);
+MZ.cam(front.toArray(), [G.c.x, G.c.y, G.c.z], 45);
+await shot('D0_rig_before.png');
+MZ.simSeconds(0.30);                              // first shot lands at t=0.30
+MZ.cam(front.toArray(), [G.c.x, G.c.y, G.c.z], 45); await shot('D1_t0.30_impact.png');
+MZ.simSeconds(0.20);
+MZ.cam(front.toArray(), [G.c.x, G.c.y, G.c.z], 45); await shot('D2_t0.50_crackfront.png');
+MZ.simSeconds(0.30);
+MZ.cam(front.toArray(), [G.c.x, G.c.y, G.c.z], 45); await shot('D3_t0.80_shards.png');
+MZ.simSeconds(4.2);                                // through wall + posts + donut
+MZ.cam(front.toArray(), [G.c.x, G.c.y, G.c.z], 45); await shot('D4_t5.0_wide.png');
+MZ.simSeconds(4.0);
+MZ.cam(front.toArray(), [G.c.x, G.c.y, G.c.z], 45); await shot('D5_t9.0_wide.png');
+// ground-level look at the glass debris pile
+const gy = G.min.y;
+MZ.cam([G.c.x+2.0, gy+1.1, G.c.z+4.0], [G.c.x, gy+0.15, G.c.z-0.5], 40);
+await shot('D6_glass_debris_ground.png');
+// the lamp post stub + fallen top
+if (post) { const P=bb(post); MZ.cam([P.c.x+7, P.min.y+2.2, P.c.z+7],[P.c.x, P.min.y+1.0, P.c.z],42); await shot('D7_lamppost.png'); }
+if (wall) { const Wl=bb(wall); MZ.cam([Wl.c.x+6, Wl.min.y+2.0, Wl.c.z+8],[Wl.c.x, Wl.min.y+1.0, Wl.c.z],45); await shot('D8_wall_chunks.png'); }
+log('debrisCount=' + c.destruction.debrisCount);
+try { log('stats=' + JSON.stringify(c.destruction.stats)); } catch(e){ log('stats err'); }
+// ---- performance: cost of a sim step with the debris live ----
+let t0=performance.now(); for(let i=0;i<120;i++) MZ.sim(1); let ms=(performance.now()-t0)/120;
+log('ms per step (sim+render) with debris = ' + ms.toFixed(2));
+MZ.camRelease();
+} catch(e) { log('ERR: ' + e.message + '\n' + e.stack); }
+log('DONE'); await dump();
+</script>
