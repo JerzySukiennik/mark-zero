@@ -282,39 +282,18 @@ export function buildMalibu(ctx, M, handoff, lod) {
     }
   }
 
-  /* ─────────────── the drum ───────────────
-   * The white cylinder that breaks the horizontal stacking in every exterior plate. */
-  // The drum starts ABOVE head height, not at the floor.
-  //
-  // It used to run from the slab up, which made it a sealed 6.2 m cylinder standing
-  // around the stair: you could walk right up to it, see a curved white wall, and
-  // conclude the game had no way down. Cutting a doorway into it was worse than useless —
-  // an opening on the wrong arc is the same as no opening, and it is easy to get wrong.
-  // Starting the cylinder at door height removes the wall from every direction at once:
-  // from the living room the stairwell is simply open, and the drum still reads as the
-  // white cylinder that breaks up the horizontals in every exterior shot.
-  const DRUM_BASE = L0 + 2.6;
-  const DRUM_H = L2 + 1.2 - DRUM_BASE;
-  const DRUM_MID = (DRUM_BASE + L2 + 1.2) / 2;
-  const drum = new THREE.Mesh(
-    new THREE.CylinderGeometry(6.2, 6.2, DRUM_H, 40, 1, true),
-    M.slab
-  );
-  drum.material.side = THREE.DoubleSide;
-  drum.position.set(15, DRUM_MID, 16);
-  drum.castShadow = drum.receiveShadow = true;
-  root.add(drum);
-  // No collider on the drum. It is an architectural cylinder standing around the stair,
-  // and a trimesh of it — doorway or not — kept stopping the player at the wall, so the
-  // stair inside stayed unreachable. Nothing is lost by leaving it non-solid: it sits
-  // inside the house, the floor slab and the treads carry their own collision, and the
-  // doorway cut into it tells the player where to walk in.
-  // (collider registered below, once drumCap exists)
-  const drumCap = new THREE.Mesh(new THREE.CircleGeometry(6.2, 40), M.slab);
-  drumCap.rotation.x = -Math.PI / 2;
-  drumCap.position.set(15, L2 + 1.2, 16);
-  root.add(drumCap);
-  handoff.solid(drumCap, { kind: 'drum-cap' });
+  /* ─────────────── the drum: REMOVED ───────────────
+   * A 6.2 m white cylinder stood around the stairwell from door height up to the roof.
+   * It was there to break the horizontal stacking in the exterior plates, and from inside
+   * it was a pipe: Jurek walked to the stairs and reported he was "in some big tube in the
+   * house", twice. It had already been raised off the floor once to stop it sealing the
+   * stair off completely, which fixed the blocking and left the tube. The stairwell is now
+   * simply an opening in the slab with a rail around it, which is what the reference
+   * houses actually have. If the exterior silhouette needs the cylinder back later it
+   * belongs OUTSIDE the glass line, not around the only way down.
+   *
+   * The cap went with it. It was a solid 6.2 m disc at roof level whose only job was to
+   * close the top of the tube. */
 
   /* ─────────────── terrace, rails, pool ─────────────── */
 
@@ -697,23 +676,82 @@ export function buildMalibu(ctx, M, handoff, lod) {
     bed.material = M.paintWhite;
   }
 
-  /* the stair down into the workshop, inside the drum */
+  /* the stair down into the workshop */
   const stairTop = new THREE.Vector3(15, L0, 16);
   {
+    /* THREE THINGS WERE WRONG WITH THIS STAIR, and they are separate problems.
+     *
+     * 1. It FLOATED. Sixteen 16 cm slabs on a helix with nothing between them and nothing
+     *    holding them up — no risers, no stringer, no newel. Read as steps hanging in a
+     *    shaft, because that is what they were.
+     * 2. It was WHITE. Built from M.slab, the house's near-white plaster, in a dark shaft.
+     *    Jurek asked for black carbon fibre; M.carbon now exists (world/props.js).
+     * 3. The shaft liner had TEETH. The hole punched in the slab is a real circle
+     *    (props.js punchHoles subdivides down to 1.2 m and filters by triangle centre);
+     *    the liner dropped through it was a 28-segment cylinder at exactly the same
+     *    4.6 m radius. A 28-gon inscribed in the circle it is meant to line leaves the
+     *    slab edge sticking through it at every one of the 28 flats — the "teeth". Fixed
+     *    by matching the punch's smoothness (64 segments) and pulling the liner 4 cm
+     *    inside the hole so the two surfaces can never fight for the same pixel.
+     */
     const steps = 16;
+    const R = 4.2;
+    const drop = (L0 - SHOP_FLOOR - 0.2);
+    const newel = new THREE.Mesh(
+      new THREE.CylinderGeometry(0.42, 0.42, drop + 0.6, 24), M.carbon);
+    newel.position.set(15, L0 - 0.3 - drop / 2, 16);
+    newel.castShadow = newel.receiveShadow = true;
+    interior.add(newel);
+    handoff.solid(newel, { kind: 'stair-newel' });
+
     for (let i = 0; i < steps; i++) {
       const t = i / steps;
       const a = -0.4 - t * 2.6;
-      const r = 4.2;
-      const st = new THREE.Mesh(new THREE.BoxGeometry(3.0, 0.16, 1.05), M.slab);
-      st.position.set(15 + Math.cos(a) * r, L0 - 0.16 - t * (L0 - SHOP_FLOOR - 0.2), 16 + Math.sin(a) * r);
+      const y = L0 - 0.16 - t * drop;
+      const st = new THREE.Mesh(new THREE.BoxGeometry(3.0, 0.16, 1.05), M.carbon);
+      st.position.set(15 + Math.cos(a) * R, y, 16 + Math.sin(a) * R);
       st.rotation.y = -a;
       st.castShadow = st.receiveShadow = true;
       interior.add(st);
       handoff.solid(st, { kind: 'stair' });
+
+      // The riser: closes the gap under the nose of each tread, so the flight reads as a
+      // solid object rather than sixteen floating tiles. Purely visual — the tread above
+      // already carries the collision, and a second collider per step is a second thing
+      // for the walker to catch on.
+      const riseH = drop / steps;
+      const ri = new THREE.Mesh(new THREE.BoxGeometry(3.0, riseH, 0.06), M.carbon);
+      ri.position.set(15 + Math.cos(a) * R, y - 0.08 - riseH / 2, 16 + Math.sin(a) * R);
+      ri.rotation.y = -a;
+      ri.position.x += Math.cos(a) * 0.0; ri.position.z += Math.sin(a) * 0.0;
+      ri.translateZ(0.50);
+      ri.receiveShadow = true;
+      interior.add(ri);
+
+      // The outer stringer: one plate running under the treads down the outside of the
+      // helix. This is what actually stops the stair looking like it levitates.
+      const sg = new THREE.Mesh(new THREE.BoxGeometry(0.10, 0.62, 1.30), M.carbon);
+      sg.position.set(15 + Math.cos(a) * (R + 1.42), y - 0.30, 16 + Math.sin(a) * (R + 1.42));
+      sg.rotation.y = -a;
+      sg.castShadow = sg.receiveShadow = true;
+      interior.add(sg);
     }
-    // hole in the main slab so the stair actually goes somewhere
-    const hole = new THREE.Mesh(new THREE.CylinderGeometry(4.6, 4.6, SLAB + 0.4, 28, 1, true),
+
+    /* The collar. The punched opening is as round as the triangles it deleted, and no
+     * subdivision limit makes it perfectly circular — there is always a last ragged
+     * millimetre. A flat ring laid over the slab from the true hole radius outwards hides
+     * that edge behind a real circle. One millimetre proud of the floor: the renderer runs
+     * a logarithmic depth buffer (engine/renderer.js), which is what makes a 1 mm offset
+     * at 96 m safe rather than a z-fighting stripe. */
+    const collar = new THREE.Mesh(new THREE.RingGeometry(4.60, 5.35, 64), M.carbon);
+    collar.rotation.x = -Math.PI / 2;
+    collar.position.set(15, L0 + 0.001, 16);
+    collar.receiveShadow = true;
+    interior.add(collar);
+
+    // The shaft liner. 64 segments to match the punched circle, and 4 cm inside it.
+    const hole = new THREE.Mesh(
+      new THREE.CylinderGeometry(4.56, 4.56, SLAB + 0.4, 64, 1, true),
       new THREE.MeshStandardMaterial({ color: 0x111417, roughness: 0.9, side: THREE.BackSide }));
     hole.position.set(15, L0 - SLAB / 2, 16);
     interior.add(hole);

@@ -221,9 +221,39 @@ function installShell(ctx, loop, ui) {
     ctx.state.paused = v;
     ui.showPause(v);
     if (v) { input.releaseLock(); ui.prompt(null); }
-    else { ui.showLegend(false); input.requestLock(); }
+    else { ui.showLegend(false); grabPointer(); }
     ui.clickHint(!v && !input.locked && !ui.titleOpen);
     ctx.bus.emit(v ? 'pause' : 'resume');
+  }
+
+  /* TAKING THE MOUSE BACK AFTER A PAUSE — and why it is not one line.
+   *
+   * Escape does two things at once, and only one of them is ours: the browser exits
+   * pointer lock, and this shell toggles the pause. Both sides then refuse to hand the
+   * pointer straight back. releaseLock() sets its own 700 ms block, and Chrome refuses
+   * any re-lock for about 1.25 s after an ESCAPE-initiated exit, silently — the promise
+   * rejects and requestPointerLock returns having done nothing.
+   *
+   * So the request fired on the resuming keystroke was always dropped, and the game came
+   * back unpaused with no mouse: the world still rendering, the suit no longer turning,
+   * nothing on screen saying why. That is what "pressing Esc freezes the game" was. It
+   * was never frozen; it had just lost its controls and said nothing about it.
+   *
+   * Retry past both cooldowns, then fall back to the thing that always works — a click,
+   * with the hint left up so he knows to make one. */
+  let grabTimer = 0;
+  function grabPointer(tries = 5) {
+    clearTimeout(grabTimer);
+    input.blockedUntil = 0;                 // our own cooldown has served its purpose
+    if (ctx.state.paused || ui.legendOpen) return;
+    if (input.locked) { ui.clickHint(false); return; }
+    input.requestLock();
+    if (tries > 0) {
+      grabTimer = setTimeout(() => grabPointer(tries - 1), 420);
+    } else {
+      ui.clickHint(true);
+      ui.say('CLICK TO TAKE THE CONTROLS.');
+    }
   }
 
   function restart() {

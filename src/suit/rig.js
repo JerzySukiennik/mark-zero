@@ -208,8 +208,10 @@ export const POSES = {
 
 // --------------------------------------------------------------------------- helpers
 
-const _v = new THREE.Vector3(), _v2 = new THREE.Vector3();
+const _v = new THREE.Vector3(), _v2 = new THREE.Vector3(), _v3 = new THREE.Vector3();
 const _q = new THREE.Quaternion(), _m = new THREE.Matrix4();
+const _q2 = new THREE.Quaternion(), _q3 = new THREE.Quaternion();
+const IDENT = new THREE.Quaternion();
 
 function mulberry32(a) {
   return function () {
@@ -541,11 +543,143 @@ export class SuitRig {
     }
   }
 
+  /* ─────────── the continuous layer ───────────────────────────────────────────────
+   *
+   * setPose() above snaps `_target` to ONE authored table and the rig slerps toward it.
+   * Five tables and one blend rate is the whole reason Jurek's armour "barely moves" and
+   * "too few parts move": a suit at 300 m/s in a hard slide held exactly the same shape
+   * as a suit at 300 m/s in a straight line, because both were 100% `cruise`.
+   *
+   * Three things replace it, and they stack in this order:
+   *   BAKE + WEIGHTS   every POSES table is baked once into per-pivot quaternions, and
+   *                    setPoseWeights() blends them. You can be 0.6 cruise / 0.4 brake.
+   *   JOINT OFFSETS    setJointOffset() post-multiplies a per-frame rotation onto a
+   *                    blended joint. This is where acceleration, slide, g-force and the
+   *                    walk cycle live — flight/poses.js drives them.
+   *   EMITTER AIMS     aimEmitterNow() re-points a palm or boot at a direction given in
+   *                    SUIT space, resolved against the blended chain, every frame. The
+   *                    authored aimWorld vectors could not do this: they were fixed in a
+   *                    pose table and the body is now rotated by a lean the table knows
+   *                    nothing about, which is exactly why the cruise palms ended up
+   *                    firing at the sky.
+   */
+  bakePoses() {
+    if (this._baked) return this._baked;
+    const keep = this._target;
+    this._baked = {};
+    for (const name of Object.keys(POSES)) {
+      this._target = {};
+      this.setPose(name);
+      this._baked[name] = this._target;
+    }
+    this._target = keep;
+    return this._baked;
+  }
+
+  /** @param w {Object} pose name -> weight. Normalised internally; small weights dropped. */
+  setPoseWeights(w) {
+    const baked = this.bakePoses();
+    let total = 0;
+    const use = [];
+    for (const name of Object.keys(w)) {
+      const k = w[name];
+      if (k > 0.001 && baked[name]) { use.push([baked[name], k]); total += k; }
+    }
+    if (!use.length) return;
+    for (const p of Object.keys(this.pivots)) {
+      let acc = null;
+      let done = 0;
+      for (const [table, k] of use) {
+        const q = table[p] || this._restQ[p];
+        const wt = k / total;
+        if (!acc) { acc = (this._target[p] || (this._target[p] = new THREE.Quaternion())).copy(q); done = wt; }
+        else {
+          done += wt;
+          // Incremental nlerp: each new term gets its share of what is left.
+          acc.slerp(q, wt / done);
+        }
+      }
+    }
+  }
+
+  /**
+   * A per-frame rotation applied on top of the blended pose for one joint, expressed in
+   * that joint's PARENT space. Cleared every frame by whoever sets them (poses.js sets
+   * the full set each tick), so a driver that stops writing simply stops offsetting.
+   */
+  setJointOffset(name, quat) {
+    if (!this._offset) this._offset = {};
+    if (!quat) { delete this._offset[name]; return; }
+    (this._offset[name] || (this._offset[name] = new THREE.Quaternion())).copy(quat);
+  }
+  clearJointOffsets() { if (this._offset) this._offset = {}; }
+
+  /**
+   * Point one emitter's exhaust axis (its local -Y) along `dirSuit`, a direction in the
+   * SUIT ROOT's space, resolved against the pose currently in `_target`. Written straight
+   * into `_target`, so it is blended and damped like everything else.
+   *
+   * `coneRad` limits how far the joint may be twisted from the pose's own aim; the excess
+   * is handed back so the caller can swing the parent limb by part of it, which is the
+   * cheap two-joint IK that makes an arm reach out to brake instead of snapping a wrist.
+   */
+  aimEmitterNow(name, dirSuit, coneRad = 1.22) {
+    const o = this.pivots[name];
+    if (!o) return 0;
+    // Accumulate the parent chain's TARGET rotation, so this lands on the pose being built.
+    _q.identity();
+    const stack = [];
+    for (let n = PIVOT_PARENT[name]; n; n = PIVOT_PARENT[n]) stack.unshift(n);
+    /* The parent chain has to include the OFFSETS, not just the blended targets.
+     * updatePose() renders `target · offset` for every joint, so resolving an emitter
+     * aim against the targets alone solves it in a frame the armour is not actually in —
+     * and the arm-reach IK below then rotates the shoulder by an offset the palm solution
+     * never saw. Measured: the braking palm sat 60 degrees off the direction of travel and
+     * got worse, not better, as the IK gain went up. */
+    const offs = this._offset;
+    for (const n of stack) {
+      _q.multiply(this._target[n] || this._restQ[n] || IDENT);
+      if (offs && offs[n]) _q.multiply(offs[n]);
+    }
+    _v2.copy(dirSuit).applyQuaternion(_q2.copy(_q).invert()).normalize();
+
+    const rest = this._restQ[name];
+    const cur = this._target[name] || rest;
+    const curAxis = _v.set(0, -1, 0).applyQuaternion(cur).normalize();
+    const d = Math.acos(Math.max(-1, Math.min(1, curAxis.dot(_v2))));
+    let excess = 0;
+    if (d > coneRad) {
+      excess = d - coneRad;
+      // Pull the request back to the edge of the cone.
+      _v3.copy(_v2).addScaledVector(curAxis, -curAxis.dot(_v2));
+      if (_v3.lengthSq() > 1e-9) {
+        _v3.normalize();
+        _v2.copy(curAxis).multiplyScalar(Math.cos(coneRad)).addScaledVector(_v3, Math.sin(coneRad));
+      }
+    }
+    const restAxis = _v3.set(0, -1, 0).applyQuaternion(rest).normalize();
+    const swing = _q2.setFromUnitVectors(restAxis, _v2);
+    (this._target[name] || (this._target[name] = new THREE.Quaternion())).copy(swing).multiply(rest);
+    return excess;
+  }
+
+  /** Lift or drop the whole skeleton relative to the root. Used by the landing crouch. */
+  setRootOffset(y) { this._rootOffsetY = y || 0; }
+
   updatePose(dt) {
     const k = 1 - Math.exp(-this._poseBlend * dt);
+    const off = this._offset;
     for (const [p, q] of Object.entries(this._target)) {
       const o = this.pivots[p];
-      if (o) o.quaternion.slerp(q, k);
+      if (!o) continue;
+      if (off && off[p]) o.quaternion.slerp(_q3.copy(q).multiply(off[p]), k);
+      else o.quaternion.slerp(q, k);
+    }
+    const hips = this.pivots.piv_hips;
+    if (hips) {
+      if (this._hipsRestY === undefined) this._hipsRestY = hips.position.y;
+      const want = this._hipsRestY + (this._rootOffsetY || 0);
+      hips.position.y += (want - hips.position.y) * (1 - Math.exp(-dt / 0.06));
     }
   }
 

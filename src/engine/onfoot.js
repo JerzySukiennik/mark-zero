@@ -353,6 +353,21 @@ export default {
       // is first-person only, so while it owns the camera V appeared to do nothing on
       // foot. cameraRig's followOnFoot does the chase shot, but only if it is allowed to.
       api.ownsCamera = onFoot && !ctx.camOverride && ctx.state.view !== 'third';
+
+      /* THE BOY HAS TO EXIST TO BE LOOKED AT.
+       * Third person on foot pointed a chase camera at a player who is not modelled at
+       * all in first person: suit/ keeps the pilot body hidden except during a suit-up,
+       * so V on foot gave a camera orbiting thin air. It follows the stance already
+       * (suit.followPlayer), so all that is missing is showing it — and hiding it again
+       * the moment the view goes back inside his own head, or you would be looking at the
+       * inside of your own skull. Never touched while a suit-up is running: suitup/ owns
+       * which parts of him are visible for the length of that ritual. */
+      const wantBoy = onFoot && !st.armor && st.view === 'third';
+      if (ctx.suit && ctx.suit.showBody && !(ctx.suitup && ctx.suitup.playing) &&
+          !(ctx.suit.parked) && wantBoy !== api._boyShown) {
+        api._boyShown = wantBoy;
+        ctx.suit.showBody(wantBoy);
+      }
       if (!api.active || (st.mode !== 'onfoot' && approach < 0)) {
         if (ctx.ui && st.mode !== 'onfoot') ctx.ui.prompt(null);
         // The environment mix is measured off the BOY's feet further down this function,

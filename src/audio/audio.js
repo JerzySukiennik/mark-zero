@@ -311,7 +311,12 @@ function wire(ctx, self) {
     if (a.intro) mixer.play(a.intro, { gain: 0.8 });
     mixer.startServo(a.servo, { rate: a.servoRate, gain: a.servoGain, cutoff: a.servoCutoff });
     mixer.play('hud_scan', { bus: 'ui', gain: 0.7 });
-    mixer.setMusic('suitup', { gain: 0.42, fade: 0.8 });
+    // Jurek's own 33 s recording of the whole ritual, laid over the top and running for as
+    // long as the sequence does. It was on disk and referenced by nothing at all — like
+    // every other file he supplied, it was never in audio/manifest.json, so the bank never
+    // fetched it and every `mixer.play` naming one of them was a silent no-op.
+    self.suitupVoice = mixer.play('jurek_suitup', { gain: 0.85 });
+    mixer.setMusic('suitup', { gain: 0.30, fade: 0.8 });
   });
 
   // One servo/clank per plate. The servo rides up as the sequence gets busier so the
@@ -339,6 +344,8 @@ function wire(ctx, self) {
   bus.on('suitup:done', (id) => {
     const a = ARMOR[id || self.armor] || ARMOR.mk3;
     self.suitingUp = false;
+    // The ritual recording is longer than most sequences; let it finish rather than cut.
+    self.suitupVoice = null;
     mixer.stopServo(a.quiet ? 0.8 : 0.3);
     mixer.play('latch', { gain: a.latch, rate: a.clankRate });
     mixer.play('suit_ready', { bus: 'ui', gain: 0.55 * a.ready, delay: 0.18 });
@@ -474,7 +481,7 @@ function wire(ctx, self) {
   // Honouring debug:* the way ARCHITECTURE.md asks, plus a global so a headless browser
   // can read the mix without a frame ever being drawn.
   bus.on('debug:audio', (p = {}) => {
-    if (p.thrust != null) self.thrustOverride = clamp(p.thrust, 0, 1);
+    if (p.thrust != null) self.thrustOverride = clamp(p.thrust, 0, 1.4);
     if (p.speed != null) self.speedOverride = Math.max(0, p.speed);
     if (p.clear) { self.thrustOverride = null; self.speedOverride = null; }
     if (p.play) mixer.play(p.play, p);

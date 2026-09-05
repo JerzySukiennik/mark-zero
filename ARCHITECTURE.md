@@ -320,3 +320,60 @@ the player into a red pill. The shell now stays where you left it with every pla
 the visor up; walking to it and holding F emits `suit:reenter`, which closes the faceplate
 and re-emits `suitup:done`. Refused in mid-air: doffing over the Pacific left a Mk III
 hanging at y = 10.2 with the boy falling away underneath it.
+
+## Flight feel: the body-orientation law and the continuous pose system (2026-09-05)
+
+**One line of quaternion composition owned three separate bug reports.** `flight.js` built
+the suit's visible orientation as `q_air · Rx(leanPitch) · Rz(leanRoll)`. The roll was about
+the body's own Z *after* a −1.32 rad pitch, and `Rx(−1.32)` maps that Z onto
+`(0, 0.969, 0.248)` in airframe space — within 14° of the airframe's vertical. So `leanRoll`
+was never a bank; it was a yaw of a body lying on its face:
+
+- holding D slid the airframe toward +X (physics correct) while the body visibly turned the
+  other way — "the A and D controls are inverted", when only the visual cue was;
+- sliding changed nothing else at all — "it just rotates the body 45 degrees";
+- the `cruise` pose aims the palms at suit-space +Z, meaning *trailing behind*. Through the
+  same pitch that becomes airframe `(0, 0.969, 0.248)`: **straight up**. "The repulsors fire
+  upward while flying" was never a bug in the plumes. They pointed exactly where the pose
+  table told them to, and the pose table did not know about the lean.
+
+The body is now described as what it physically is: **the spine lines up with the thrust**.
+`poses.js` computes a spine axis and a bank; `flight.js` composes
+`q_air · swing(+Y → spine) · R_spine(bank)`. Cruise lies down head-first because the mains
+push from the boots; braking stands up feet-first; a slide leans and banks into itself. No
+pose table authors any of it. The airframe still goes where the mouse points — aiming with
+the mouse and pressing W is the ten-second rule in `input.js`, and a suit whose thrust axis
+is separate from its aim is a two-stick spaceship.
+
+**Poses are continuous now, not five static tables.** `rig.js` gained `bakePoses` /
+`setPoseWeights` (blend several authored tables at once), `setJointOffset` (a per-frame
+rotation per joint), `aimEmitterNow` (point a palm or boot along a direction in suit space,
+resolved against the blended chain) and `setRootOffset` (the landing crouch). `poses.js`
+drives them from acceleration, command, speed and g-force.
+
+Two traps, both measured:
+
+- **Offsets must accumulate, never replace.** `setJointOffset` copies, so the last writer
+  won: the arm-reach IK overwrote the shoulder every frame and silently deleted the sweep,
+  the ski lean and the idle wobble written a few lines above it. The shoulder offset sat at
+  exactly −0.1317 for as long as you cared to watch.
+- **`aimEmitterNow` must walk the offsets too.** `updatePose` renders `target · offset`, so
+  resolving an emitter aim against the targets alone solves it in a frame the armour is not
+  in. The braking palm sat 60° off the direction of travel and got *worse* as the IK gain
+  went up. With the offsets in the chain and two IK passes: cruise palm exhaust · velocity
+  = −1.00, braking palm · velocity = +1.00.
+
+**Flight numbers that changed, with the reason:**
+
+| what | was | now | why |
+|---|---|---|---|
+| hover engage | auto after 0.3 s idle below 45 m/s | `hoverHold` only | it made H a no-op, stopped the suit ever falling, and a servo-held suit can never satisfy the grounded test |
+| `grounded` | `thrustMag < 0.08` | `manualCmd < 0.05` | the servo adds 0.34 to `thrustMag`, so a parked suit on the floor was never grounded |
+| H at speed | armed, no force | omnidirectional burn at 0.85 mains | 302 m/s to rest in 13 s, then parks |
+| keys while parked | dropped the servo | walk the anchor at 12 m/s | measured 22.3 m per 2 s nudge (was 160 m — the mains were firing alongside the servo) |
+| lateral / vertical | 2800 / 6600 N | 0.45 / 0.75 of mains | a fifth of forward authority is why braking sideways and landing were hopeless |
+| lateral drag | quadratic only | flight assist to zero in 0.6 s | 0.95 m/s² at a 20 m/s slide is nothing; the slide never bled off |
+| tail-first drag | same as nose-first | `dragRatio.back = 8` | nothing ever bled a reversed flight off |
+| S | pure velocity-opposing brake | blend of stop and reverse | the impulse cap made backward flight impossible *by construction* |
+| boost | flat ×1.45 on the mains | punch decaying over 0.35 s + 25% forward-drag cut | every feedback channel was already saturated by W alone; `state.thrust` now clamps at 1.4, not 1 |
+| turn authority | fixed | ×(1 + 0.6·(1 − throttle)) | cut the engine, spin, burn the other way |

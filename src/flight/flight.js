@@ -62,43 +62,52 @@ const SPEED_OF_SOUND = 340.29;
 // still does most of the work. The rest of the axis anisotropy comes from thrust instead:
 // the mains are 4.8x the side jets, so top speed forward stays ~4.4x top speed sideways.
 // ---------------------------------------------------------------------------------------
+/* SIDE AND VERTICAL AUTHORITY, RAISED. The Mk III had 2800 N sideways against 13400 N of
+ * mains — 12.7 m/s^2, a fifth of what it can do forwards — and 6600 N up, which nets only
+ * 20 m/s^2 once gravity is paid. Both of Jurek's "terribly slow to brake sideways / to land"
+ * complaints are those two numbers. They are now 0.45 and 0.75 of the mains, so a slide is
+ * a manoeuvre you can actually stop and a descent is one you can actually arrest.
+ *
+ * dragRatio.back is new: drag flying TAIL-FIRST. The k table was symmetric on Z, so an
+ * armour going backwards was as slippery as one going nose-first and nothing ever bled a
+ * reversed flight off. */
 export const ARMOR_SPECS = {
   mk1: {
     name: 'MARK I', mass: 340,
-    main: 9800, lateral: 1900, vertical: 8600, retro: 0.22,
-    topSpeed: 150, dragRatio: { lateral: 3.2, vertical: 4.2 },
+    main: 9800, lateral: 4410, vertical: 7350, retro: 0.22,
+    topSpeed: 150, dragRatio: { lateral: 3.2, vertical: 4.2, back: 6.5 },
     maxRate: 1.9, rollRate: 2.4, alphaMax: 8, rollAlphaMax: 12,
     rateFalloffRef: 90, stability: 0.55, integrity: 900, power: 0.8,
     boost: 1.15, flaw: null,
   },
   mk2: {
     name: 'MARK II', mass: 215,
-    main: 12600, lateral: 2700, vertical: 6200, retro: 0.28,
-    topSpeed: 300, dragRatio: { lateral: 4.0, vertical: 5.6 },
+    main: 12600, lateral: 5670, vertical: 9450, retro: 0.28,
+    topSpeed: 300, dragRatio: { lateral: 4.0, vertical: 5.6, back: 8 },
     maxRate: 3.0, rollRate: 4.2, alphaMax: 14, rollAlphaMax: 24,
     rateFalloffRef: 200, stability: 1.0, integrity: 1100, power: 1.0,
     boost: 1.4, flaw: 'icing',
   },
   mk3: {
     name: 'MARK III', mass: 220,
-    main: 13400, lateral: 2800, vertical: 6600, retro: 0.28,
-    topSpeed: 320, dragRatio: { lateral: 4.0, vertical: 5.6 },
+    main: 13400, lateral: 6030, vertical: 10050, retro: 0.28,
+    topSpeed: 320, dragRatio: { lateral: 4.0, vertical: 5.6, back: 8 },
     maxRate: 3.1, rollRate: 4.4, alphaMax: 14, rollAlphaMax: 25,
     rateFalloffRef: 210, stability: 1.05, integrity: 1600, power: 1.0,
     boost: 1.45, flaw: null,
   },
   mk42: {
     name: 'MARK XLII', mass: 190,
-    main: 13000, lateral: 3000, vertical: 6400, retro: 0.30,
-    topSpeed: 330, dragRatio: { lateral: 3.8, vertical: 5.2 },
+    main: 13000, lateral: 5850, vertical: 9750, retro: 0.30,
+    topSpeed: 330, dragRatio: { lateral: 3.8, vertical: 5.2, back: 8 },
     maxRate: 3.4, rollRate: 5.0, alphaMax: 16, rollAlphaMax: 28,
     rateFalloffRef: 215, stability: 0.85, integrity: 1200, power: 0.9,
     boost: 1.45, flaw: 'unstable',
   },
   mk50: {
     name: 'MARK L', mass: 205,
-    main: 15200, lateral: 3400, vertical: 7400, retro: 0.34,
-    topSpeed: 380, dragRatio: { lateral: 4.2, vertical: 5.8 },
+    main: 15200, lateral: 6840, vertical: 11400, retro: 0.34,
+    topSpeed: 380, dragRatio: { lateral: 4.2, vertical: 5.8, back: 8.5 },
     maxRate: 3.6, rollRate: 5.2, alphaMax: 18, rollAlphaMax: 30,
     rateFalloffRef: 240, stability: 1.2, integrity: 2000, power: 1.25,
     boost: 1.5, flaw: null,
@@ -120,6 +129,7 @@ const _q3 = new THREE.Quaternion();
 const _q4 = new THREE.Quaternion();
 const X_AXIS = new THREE.Vector3(1, 0, 0);
 const Z_AXIS = new THREE.Vector3(0, 0, 1);
+const Y_AXIS = new THREE.Vector3(0, 1, 0);
 const _e = new THREE.Euler(0, 0, 0, 'YXZ');
 const _m = new THREE.Matrix4();
 
@@ -168,6 +178,7 @@ export class FlightModel {
     this.landT = 0;         // seconds into it
     this.mode = 'STANDBY';
     this.boostActive = 0;
+    this.boostT = 0;
     this.boostLock = false;
 
     this.hover = false;              // hover servo currently flying the suit
@@ -189,6 +200,8 @@ export class FlightModel {
       x: kf * spec.dragRatio.lateral,
       y: kf * spec.dragRatio.vertical,
       z: kf,
+      // Tail-first. Body forward is -Z, so _b.z > 0 means the air is hitting his back.
+      zBack: kf * (spec.dragRatio.back || 1),
     };
     // Body lift. Calibrated, not guessed: at 250 m/s with the nose 5 degrees above the
     // flight path the lift equals the suit's weight, so a suit flying fast holds altitude
@@ -241,7 +254,12 @@ export class FlightModel {
   // low-speed rate, so a 180 degree flip is a three-second commitment, not a twitch.
   authority() {
     const v = this.speed;
-    return 1 / (1 + Math.pow(v / this.spec.rateFalloffRef, 1.3));
+    // A COASTING SUIT TURNS FASTER. Jurek wants to cut the engine, spin round in the air
+    // and burn the other way; with the mains lit the airframe is fighting its own thrust
+    // vector, and with them off it is not. 60% more rate at zero throttle is what makes
+    // that manoeuvre feel like a decision rather than a slow arc.
+    const coast = 1 + 0.6 * (1 - clamp(this.throttle || 0, 0, 1));
+    return coast / (1 + Math.pow(v / this.spec.rateFalloffRef, 1.3));
   }
 
   // -------------------------------------------------------------------------------------
@@ -319,15 +337,32 @@ export class FlightModel {
     // a real charge back in it, instead of stuttering on and off at the threshold.
     if (this.power < 0.12) this.boostLock = true;
     else if (this.power > 0.35) this.boostLock = false;
-    const boost = (cmd.boost > 0 && !this.boostLock) ? spec.boost : 1;
-    this.boostActive = boost > 1 ? 1 : 0;
+    /* BOOST YOU CAN FEEL. It used to be a flat x1.45 on the mains, which develops 65 m/s
+     * of extra top speed over fifteen seconds and changes nothing you can see or hear in
+     * the first second — every feedback channel (state.thrust, the plumes, the audio) was
+     * already saturated by W alone, and the FOV moved 3 degrees. Hence "boost does
+     * nothing". Two changes: a punch that decays over a third of a second so pressing it
+     * is an event, and a cut in forward drag so the top end actually moves.
+     * Mk III: 320 -> ~445 m/s, inside the existing hardMax of 520. */
+    const boosting = cmd.boost > 0 && !this.boostLock;
+    this.boostT = boosting ? (this.boostT || 0) + dt : 0;
+    const boost = boosting ? spec.boost * (1 + 0.8 * Math.exp(-this.boostT / 0.35)) : 1;
+    this.boostActive = boosting ? 1 : 0;
 
     const fwd = Math.max(cmd.forward, 0);
     const back = Math.max(-cmd.forward, 0);
     this.throttle = fwd * (boost > 1 ? 1 : 0.72);
 
+    /* IN DRONE MODE THE KEYS MOVE THE ANCHOR, NOT THE SUIT.
+     * updateHover() walks the hover anchor when you press a direction while parked. If the
+     * mains fire as well, you get both: measured, a 2 s nudge travelled 160 m instead of
+     * the 24 m the anchor walk asks for, because the servo was fighting 13.4 kN of thrust
+     * it had not asked for. Read off LAST frame's hover state, which is what the servo is
+     * about to confirm anyway. */
+    const droneMode = this.hover && this.hoverHold;
+
     _f.set(0, 0, 0);
-    _f.z -= fwd * spec.main * boost * power;              // mains: body forward is -Z
+    if (!droneMode) _f.z -= fwd * spec.main * boost * power;   // mains: body forward is -Z
 
     // S is a REAL stop now, and it is a different manoeuvre from "thrust backwards".
     //
@@ -343,22 +378,38 @@ export class FlightModel {
     // three axes of it, which kills drift and forward run together and lines up exactly
     // with the brake pose the rig now holds. Capped so it can never add speed backwards
     // once the velocity it is fighting is gone.
-    if (back > 0.01) {
+    if (back > 0.01 && !droneMode) {
       _bv.copy(this.velocity).applyQuaternion(_q.copy(this.quaternion).invert());
       const bs = _bv.length();
-      if (bs > 0.05) {
-        // Enough force to stop from top speed in about 3.5 s, and never more than the
-        // impulse that would zero the velocity this tick.
+      // BLEND OF STOP AND REVERSE. Capping the retro at the impulse that zeroes the
+      // velocity made it a brake that can never, by construction, produce a backward
+      // speed — so "you can't fly backwards any more" was the direct cost of fixing the
+      // braking. beta is how much of S is "go backwards" rather than "stop": all of it
+      // once you have nearly stopped or are already travelling backwards, none of it at
+      // speed. One key, and it does the right thing at both ends.
+      const beta = (bs > 0.05 && _bv.z > 0.7 * bs) ? 1 : 1 - clamp((bs - 4) / 8, 0, 1);
+      _d.set(0, 0, beta);
+      if (bs > 0.05) _d.addScaledVector(_bv, -(1 - beta) / bs);
+      if (_d.lengthSq() > 1e-6) {
+        _d.normalize();
         const want = back * spec.main * BRAKE_K * power;
-        const maxNow = (bs / dt) * spec.mass;
-        _bv.multiplyScalar(-Math.min(want, maxNow) / bs);
-        _f.add(_bv);
+        // Only the STOPPING part is impulse-capped; the reverse part is free to accelerate.
+        const cap = beta < 0.999 ? (bs / dt) * spec.mass / (1 - beta) : Infinity;
+        _f.addScaledVector(_d, Math.min(want, cap));
       }
     }
-    _f.x += cmd.lateral * spec.lateral * power;
-    _f.y += cmd.vertical * spec.vertical * power;
+    if (!droneMode) {
+      _f.x += cmd.lateral * spec.lateral * power;
+      _f.y += cmd.vertical * spec.vertical * power;
+    }
 
     const manualCmd = Math.abs(cmd.forward) + Math.abs(cmd.lateral) + Math.abs(cmd.vertical);
+    this._manualCmd = manualCmd;   // resolveGround needs it; see the grounded test there
+
+    // The thrust vector, in body axes, before drag and gravity touch it. poses.js lines the
+    // suit's spine up with this — see the body-orientation law there.
+    if (!this.thrustBody) this.thrustBody = new THREE.Vector3();
+    this.thrustBody.copy(_f);
 
     // ---- 3. HOVER SERVO ----------------------------------------------------------------
     // Not a velocity damper — a position servo. It holds a point in the world.
@@ -370,9 +421,21 @@ export class FlightModel {
     _d.set(
       -this.k.x * _b.x * Math.abs(_b.x),
       -this.k.y * _b.y * Math.abs(_b.y),
-      -this.k.z * _b.z * Math.abs(_b.z)
+      -(_b.z > 0 ? this.k.zBack : this.k.z * (this.boostActive ? 0.75 : 1)) * _b.z * Math.abs(_b.z)
     ).multiplyScalar(rho);
     _f.add(_d);
+
+    /* LATERAL FLIGHT ASSIST — the "sideways drag" that was missing.
+     * Quadratic drag at a 20 m/s slide is 0.95 m/s^2: nothing. Let go of A and the suit
+     * kept sliding for the rest of the flight, which is Jurek's "no drag, it doesn't lose
+     * speed flying sideways". Only on X, only when you are NOT asking for a slide, and
+     * never on Y or Z — so it kills drift without ever holding him up or eating his coast.
+     * Sized to bleed a slide out in about 0.6 s, plus a small linear term so the last
+     * centimetre per second dies instead of creeping. */
+    if (Math.abs(cmd.lateral || 0) < 0.05 && Math.abs(_b.x) > 0.01) {
+      const want = -_b.x * spec.mass / 0.6 - _b.x * 40;
+      _f.x += clamp(want, -spec.lateral, spec.lateral);
+    }
 
     // ---- 4b. BODY LIFT -----------------------------------------------------------------
     // Without this the model has a hole in it that a player finds in ten seconds: hold W
@@ -429,36 +492,59 @@ export class FlightModel {
 
     if (cmd.hoverToggle) this.hoverHold = !this.hoverHold;
 
-    // Any translation command drops the servo instantly. This is the "does not fight you"
-    // rule: the assist is never in the loop while your hand is on a key.
-    if (manualCmd > 0.01) {
-      this.idleTime = 0;
-      if (this.hover) { this.hover = false; }
-      if (manualCmd > 0.01 && !this.hoverHold) this.hoverArmed = false;
+    /* THE SERVO ONLY EVER ENGAGES BECAUSE YOU ASKED IT TO.
+     *
+     * It used to catch you automatically after a third of a second hands-off below 45 m/s.
+     * Three of Jurek's complaints are that one clause:
+     *   - "hover lock does nothing" — H was indistinguishable from letting go, because
+     *     letting go did the same thing.
+     *   - "without holding thrust the suit should FALL" — it never fell. Cut the engine at
+     *     40 m/s and the servo parked you in the air.
+     *   - "slow to land" — a servo-held suit can never satisfy the grounded test, so it
+     *     hovered a metre up forever instead of arriving.
+     * So: `hoverHold` is the whole engage condition. Nothing else parks the suit. */
+    this.idleTime = manualCmd > 0.01 ? 0 : this.idleTime + dt;
+
+    if (!this.hoverHold) {
+      this.hover = false;
+      this.hoverArmed = false;
       return;
     }
-    this.idleTime += dt;
 
-    // Engage: automatically once you have been hands-off for a third of a second and are
-    // slow enough for the servo to catch you; or immediately on H once you are slow.
-    // H at 300 m/s only ARMS it — the flight computer will not fake a brake you have to
-    // earn by turning the suit around.
-    //
-    // 45 m/s, not 25. The first cut used 25 and it never fired: you let go at 24 m/s,
-    // gravity spends the third-of-a-second dwell putting you back over the threshold,
-    // and the suit falls out of the sky with the hover watching. Measured, not guessed —
-    // the burn test dropped from 24.7 m/s to 86 m/s with hands off and hover never armed.
+    // H below 60 m/s parks you. Above it, H ARMS the stop — the flight computer will not
+    // fake a brake you have to earn — and applies the same omnidirectional burn as S until
+    // the speed is low enough for the position servo to take over.
     const canCatch = sp < 60;
-    const wants = this.hoverHold || (this.idleTime > 0.3 && sp < 45);
-    if (!this.hover && wants && canCatch && !this.grounded) {
+    if (!this.hover && canCatch && !this.grounded) {
       this.hover = true;
       this.hoverAnchor.copy(this.position);
       this.hoverArmed = false;
     } else if (!this.hover) {
-      this.hoverArmed = this.hoverHold && !canCatch;
+      this.hoverArmed = true;
+      // Hold H at speed and the suit kills its own velocity, whatever direction it is in.
+      _bv.copy(this.velocity).applyQuaternion(_q.copy(this.quaternion).invert());
+      const bs = _bv.length();
+      if (bs > 0.05) {
+        const want = spec.main * BRAKE_K * power;
+        _bv.multiplyScalar(-Math.min(want, (bs / dt) * spec.mass) / bs);
+        force.add(_bv);
+      }
+      return;
     }
-    if (this.hover && this.grounded && !this.hoverHold) this.hover = false;
     if (!this.hover) return;
+
+    /* DRONE MODE. A translation command used to drop the servo instantly, which made H
+     * useless the moment you wanted to move an inch — and "park, then nudge into place"
+     * is the entire point of a hover lock when you are trying to land on a donut. The keys
+     * now WALK THE ANCHOR instead of cancelling it: 12 m/s of anchor travel in whatever
+     * direction you ask, with the servo still flying the suit to it. */
+    if (manualCmd > 0.01) {
+      _t.set(cmd.lateral || 0, cmd.vertical || 0, -(cmd.forward || 0));
+      if (_t.lengthSq() > 1e-6) {
+        _t.normalize().applyQuaternion(this.quaternion).multiplyScalar(12 * dt);
+        this.hoverAnchor.add(_t);
+      }
+    }
 
     // Critically damped PD on the anchor. kp=6, kd=5 gives zeta ~ 1.02.
     _t.copy(this.hoverAnchor).sub(this.position).multiplyScalar(6.0);
@@ -536,7 +622,13 @@ export class FlightModel {
       } else {
         this.velocity.y = Math.max(this.velocity.y, 0);
       }
-      this.grounded = this.velocity.lengthSq() < 6 && this.thrustMag < 0.08;
+      /* GROUNDED IS ABOUT YOUR HANDS, NOT ABOUT THE THRUSTERS.
+       * The old test was `thrustMag < 0.08`, and the hover servo adds ~0.34 to thrustMag
+       * whenever it is holding the suit up — so a servo-held armour resting on the floor
+       * was never "grounded": mode never became GROUND, the pose never became `stand`, and
+       * it hovered a body-length up forever. Ask instead whether the pilot is commanding
+       * anything, which is the thing that actually distinguishes landing from flying. */
+      this.grounded = this.velocity.lengthSq() < 6 && (this._manualCmd || 0) < 0.05;
     }
 
     if (this.impact > 11) {
@@ -823,12 +915,28 @@ export default {
       //
       // The offset is rotated by the SAME quaternion, which keeps the body's centre on the
       // flight model's point mass instead of swinging the whole armour out on a 1 m arm.
+      /* THE BODY, composed from the spine axis and the bank — not from two Euler angles.
+       *
+       * The old form was q_air · Rx(leanPitch) · Rz(leanRoll), and the Rz was applied
+       * about the body's own Z after a 76 degree pitch, which put it within 14 degrees of
+       * the airframe's vertical: it yawed the armour instead of banking it. See the long
+       * note in poses.js for the three bugs that came out of that one composition.
+       *
+       * `spine` is the feet->head axis the pose controller wants, in AIRFRAME space, so
+       * the swing that takes the body's +Y onto it is the whole orientation; `bank` then
+       * rolls about that same axis, which is a real bank at any spine angle.
+       */
       const pp = ctx.flight.poseParams;
-      _q2.setFromAxisAngle(X_AXIS, (pp && pp.leanPitch) || 0);
+      const spine = (pp && pp.spine) || Y_AXIS;
+      _q2.setFromUnitVectors(Y_AXIS, spine);
       _q3.copy(model.quaternion).multiply(_q2);
-      // ...and the roll into a sideways slide, about the body's own Z, after the pitch so
-      // it banks the laid-down silhouette rather than twisting it about the world axis.
-      if (pp && Math.abs(pp.leanRoll) > 0.001) _q3.multiply(_q4.setFromAxisAngle(Z_AXIS, pp.leanRoll));
+      // Sign measured, not reasoned: with a minus here, holding D slid the airframe toward
+      // world +X (screen right, confirmed from the body velocity) while the suit's +X side
+      // rose 0.22 — banking AWAY from the turn, the outside edge lifting like a car body
+      // rolling. Into the turn is the reading everyone knows.
+      if (pp && Math.abs(pp.bank) > 0.001) {
+        _q3.multiply(_q4.setFromAxisAngle(Y_AXIS, pp.bank));
+      }
       _v.copy(FEET_OFFSET).applyQuaternion(_q3);
       suitRoot.position.copy(model.position).add(_v);
       suitRoot.quaternion.copy(_q3);
@@ -848,7 +956,10 @@ export default {
     s.altitude = model.altitude || 0;
     s.throttle = model.throttle;
     s.gForce = model.gForce;
-    s.thrust = Math.min(model.thrustMag, 1);
+    // 1.4, not 1. The plumes, the audio and the HUD all read this, and clamping it at 1
+    // meant every one of them was already saturated by W alone — so boost had nowhere to
+    // show. See the boost block in step().
+    s.thrust = Math.min(model.thrustMag, 1.4);
     s.hoverLock = model.hover;
     s.icing = model.ice;
     s.integrity = model.integrity;

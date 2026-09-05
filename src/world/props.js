@@ -340,6 +340,15 @@ export function buildMaterials() {
       side: THREE.DoubleSide, depthWrite: false,
     }),
     mullion: new THREE.MeshStandardMaterial({ color: 0x2b3238, roughness: 0.45, metalness: 0.7 }),
+    /* Carbon fibre, for the stair down into the workshop. It used to be built out of
+     * `slab` — the same near-white plaster as the house — so sixteen bright treads floated
+     * in a dark shaft and read as polystyrene. Woven carbon is nearly black, low-ish
+     * roughness with a clear-coat sheen, and just metallic enough to catch the workshop's
+     * practicals along an edge. */
+    carbon: new THREE.MeshPhysicalMaterial({
+      color: 0x14171a, roughness: 0.34, metalness: 0.42, envMapIntensity: 1.0,
+      clearcoat: 0.7, clearcoatRoughness: 0.22,
+    }),
     steel: new THREE.MeshStandardMaterial({ color: 0x8e969c, roughness: 0.36, metalness: 0.9 }),
     darkSteel: new THREE.MeshStandardMaterial({ color: 0x3a4046, roughness: 0.42, metalness: 0.85 }),
     /* ── the same two metals, for the BASEMENT ──
@@ -552,8 +561,16 @@ function punchHoles(geo, holes) {
   let tris = [];
   for (let t = 0; t < src.length; t += 3) tris.push([src[t], src[t + 1], src[t + 2]]);
 
-  const LIMIT = 1.2;               // metres; below this the centre test is reliable
-  for (let pass = 0; pass < 6; pass++) {
+  /* 0.45 m, and eight passes to reach it.
+   *
+   * At 1.2 m over six passes the edge of a 4.6 m stairwell is a ring of 1.2 m steps: the
+   * opening came out as a jagged polygon with long triangles spiking into it — the "teeth"
+   * Jurek reported around the stair. The centre test is only ever as round as the pieces
+   * it is deleting. Subdivision is confined to a box r + 2 m around each hole, so the cost
+   * is local: roughly 1.7 k extra triangles for this stairwell, not a re-tessellation of
+   * the whole 50 m plate. A collar ring in malibu.js covers whatever is left over. */
+  const LIMIT = 0.45;              // metres; below this the centre test is reliable
+  for (let pass = 0; pass < 8; pass++) {
     let split = false;
     const out = [];
     for (const [a, b, c] of tris) {
