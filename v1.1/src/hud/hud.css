@@ -1,0 +1,17 @@
+/* JARVIS HUD — owned by task `hud`.
+
+   THIS FILE IS DELIBERATELY EMPTY OF LAYOUT.
+
+   The HUD used to be DOM + SVG styled from here. It looked right in a browser and was
+   invisible in every screenshot the project can take: MZ.shot() reads the WebGL canvas
+   back with toDataURL(), and DOM siblings are not in it — so a critic rendering our
+   frame beside reference/hud/hud_mk3_targeting.jpg was handed an empty ocean, and the
+   helmet aperture (a CSS gradient) was missing with it.
+
+   The HUD is now painted into a 2D canvas and drawn as two planes parented to the
+   camera. See src/hud/hud.js and src/hud/paint.js. The ink ramp that used to live in
+   the custom properties below now lives in paint.js as INK / ALPHA.
+
+   Nothing loads this file any more. It is kept so an old <link> cannot 404. */
+
+#hud { display: none; }

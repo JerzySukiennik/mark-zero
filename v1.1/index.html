@@ -1,0 +1,128 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1,viewport-fit=cover">
+<title>MARK ZERO</title>
+<!-- Inline so there is no favicon round-trip (and no 404 in the console). -->
+<link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 32 32'%3E%3Ccircle cx='16' cy='16' r='15' fill='%23050a0e'/%3E%3Ccircle cx='16' cy='16' r='10' fill='none' stroke='%238fd8f0' stroke-width='1.6'/%3E%3Ccircle cx='16' cy='16' r='5.4' fill='%23dff4ff'/%3E%3C/svg%3E">
+<style>
+  html,body{margin:0;height:100%;background:#05080b;overflow:hidden;
+    font-family:"Helvetica Neue",Helvetica,Arial,sans-serif;color:#cfe6ff;
+    -webkit-font-smoothing:antialiased}
+  #app{position:fixed;inset:0}
+  canvas{display:block;width:100%;height:100%}
+
+  /* The boot panel is markup, not a render, so it is on screen before three.js is even
+     parsed. Once the environment exists main.js adds .sky and the panel goes translucent
+     over the real Malibu horizon — the player never looks at a black rectangle. */
+  #boot{position:fixed;inset:0;z-index:50;display:flex;align-items:center;
+    justify-content:center;flex-direction:column;gap:20px;
+    background:radial-gradient(120% 100% at 50% 46%,#0b1721 0%,#05080b 62%,#000 100%);
+    transition:opacity .7s ease,background-color .9s ease}
+  #boot.sky{background:radial-gradient(120% 100% at 50% 46%,rgba(9,20,28,.80) 0%,rgba(4,7,11,.88) 62%,rgba(0,0,0,.93) 100%)}
+  #boot.gone{opacity:0;pointer-events:none}
+
+  #reactor{width:74px;height:74px;position:relative}
+  #reactor svg{position:absolute;inset:0}
+  #reactor .r1{animation:spin 6.5s linear infinite;transform-origin:50% 50%}
+  #reactor .r2{animation:spin 11s linear infinite reverse;transform-origin:50% 50%}
+  #reactor .core{animation:breathe 2.4s ease-in-out infinite;transform-origin:50% 50%}
+  @keyframes spin{to{transform:rotate(360deg)}}
+  @keyframes breathe{0%,100%{opacity:.55}50%{opacity:1}}
+
+  #boot h1{font-size:12px;letter-spacing:.78em;font-weight:300;margin:0;color:#8fd8f0;
+    text-indent:.78em}
+  #bootbar{width:212px;height:1px;background:#12303f;position:relative;overflow:hidden}
+  #bootbar i{position:absolute;inset:0 100% 0 0;background:#8fd8f0;
+    transition:right .35s ease;box-shadow:0 0 8px #8fd8f0}
+  #boottext{font-size:9px;letter-spacing:.34em;color:#41697d;height:12px;
+    text-transform:uppercase}
+
+  /* Last-resort error sink. ui.js takes over as soon as it exists, but an import that
+     fails before that has to land somewhere the player can read. */
+  #err{position:fixed;left:0;right:0;bottom:0;max-height:45%;overflow:auto;z-index:60;
+    background:rgba(38,9,9,.95);color:#ffc0c0;font:11px/1.55 ui-monospace,Menlo,monospace;
+    padding:12px 16px;white-space:pre-wrap;display:none;border-top:1px solid #7a2020}
+
+  /* If the module script never runs at all — a bad path, a browser with no ES modules,
+     opening the file over file:// — this is the only thing the player would ever see. */
+  #nomodule{position:fixed;inset:0;z-index:70;display:none;align-items:center;
+    justify-content:center;padding:40px;text-align:center;background:#08111a;
+    font-size:13px;line-height:1.7;letter-spacing:.06em;color:#a9c9da}
+  #nomodule b{display:block;font-size:11px;letter-spacing:.5em;color:#8fd8f0;
+    margin-bottom:16px;font-weight:400}
+  #nomodule code{color:#dff2fb;font-family:ui-monospace,Menlo,monospace}
+</style>
+<script type="importmap">
+{
+  "imports": {
+    "three": "./vendor/three.module.js",
+    "three/addons/": "./vendor/three-addons/",
+    "rapier": "./vendor/rapier/rapier.es.js"
+  }
+}
+</script>
+</head>
+<body>
+<div id="app"></div>
+
+<div id="boot">
+  <div id="reactor">
+    <svg viewBox="0 0 74 74" fill="none">
+      <circle class="core" cx="37" cy="37" r="7" fill="#cdefff"/>
+      <circle cx="37" cy="37" r="11.5" stroke="#8fd8f0" stroke-width="1" opacity=".8"/>
+      <g class="r1" stroke="#7fc9e6" stroke-width="1" opacity=".65">
+        <circle cx="37" cy="37" r="19" stroke-dasharray="9 7"/>
+      </g>
+      <g class="r2" stroke="#4d8ba6" stroke-width="1" opacity=".55">
+        <circle cx="37" cy="37" r="27.5" stroke-dasharray="2 12"/>
+      </g>
+      <circle cx="37" cy="37" r="35" stroke="#20465a" stroke-width="1" opacity=".7"/>
+    </svg>
+  </div>
+  <h1>MARK ZERO</h1>
+  <div id="bootbar"><i></i></div>
+  <div id="boottext">initialising</div>
+</div>
+
+<pre id="err"></pre>
+
+<div id="nomodule">
+  <div>
+    <b>MARK ZERO</b>
+    The game did not start.<br><br>
+    It has to be served over <code>http://</code> — ES modules and <code>.glb</code> files
+    will not load from <code>file://</code>.<br><br>
+    Double-click <code>play.command</code>, or run <code>python3 serve.py</code>
+    in the project folder, then open <code>http://localhost:8770/</code>.
+  </div>
+</div>
+
+<script>
+  // Surface every error on screen. Jurek does not open a devtools console.
+  // ui.js installs a nicer panel later; this one catches everything before that exists.
+  (function () {
+    var errBox = document.getElementById('err');
+    function show(msg) {
+      var ui = window.__mzUI;
+      if (ui && ui.error) { ui.error(msg); return; }
+      errBox.style.display = 'block';
+      errBox.textContent += msg + '\n';
+    }
+    addEventListener('error', function (e) {
+      if (e.message) show(e.message + '\n  ' + (e.filename || '') + ':' + (e.lineno || ''));
+    });
+    addEventListener('unhandledrejection', function (e) {
+      show('promise: ' + (e.reason && e.reason.stack || e.reason));
+    });
+    // If main.js has not signalled life within 6 s, something never loaded at all.
+    setTimeout(function () {
+      if (!window.MZ && !window.__mzBooting) document.getElementById('nomodule').style.display = 'flex';
+    }, 6000);
+  })();
+</script>
+<script type="module" src="./src/main.js"></script>
+<script nomodule>document.getElementById('nomodule').style.display = 'flex';</script>
+</body>
+</html>
