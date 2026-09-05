@@ -40,6 +40,7 @@
 import * as THREE from 'three';
 import { Input, readCommand, emptyCommand } from './input.js';
 import { Poses } from './poses.js';
+import { ThrustFX } from './thrustfx.js';
 
 const G = 9.80665;
 const SPEED_OF_SOUND = 340.29;
@@ -111,13 +112,20 @@ const _b = new THREE.Vector3();
 const _d = new THREE.Vector3();
 const _t = new THREE.Vector3();
 const _w = new THREE.Vector3();
+const _bv = new THREE.Vector3();
 const _q = new THREE.Quaternion();
 const _qi = new THREE.Quaternion();
 const _q2 = new THREE.Quaternion();
 const _q3 = new THREE.Quaternion();
+const _q4 = new THREE.Quaternion();
 const X_AXIS = new THREE.Vector3(1, 0, 0);
+const Z_AXIS = new THREE.Vector3(0, 0, 1);
 const _e = new THREE.Euler(0, 0, 0, 'YXZ');
 const _m = new THREE.Matrix4();
+
+// Retro authority as a fraction of the mains. 0.85 stops a Mk III from top speed in about
+// three and a half seconds; the old spec.retro (0.28, forward axis only) took nineteen.
+const BRAKE_K = 0.85;
 
 function clamp(x, a, b) { return x < a ? a : x > b ? b : x; }
 
@@ -155,6 +163,9 @@ export class FlightModel {
     this.grounded = false;
     this.contact = false;
     this.impact = 0;
+    this.landHard = 0;      // 0..1 severity of the landing being played
+    this._arriveSpeed = 0;
+    this.landT = 0;         // seconds into it
     this.mode = 'STANDBY';
     this.boostActive = 0;
     this.boostLock = false;
@@ -317,7 +328,33 @@ export class FlightModel {
 
     _f.set(0, 0, 0);
     _f.z -= fwd * spec.main * boost * power;              // mains: body forward is -Z
-    _f.z += back * spec.main * spec.retro * power;        // palm repulsors, deliberately weak
+
+    // S is a REAL stop now, and it is a different manoeuvre from "thrust backwards".
+    //
+    // It used to add spec.retro (22-34%) of the mains straight down body +Z, on the theory
+    // that stopping should cost you a turn. In practice that is 6 m/s^2 against a suit
+    // doing 340, which is nineteen seconds and about three kilometres to come to rest —
+    // Jurek's "it tries to stop, but very badly". Worse, it only ever fought the forward
+    // component: sideways drift was untouchable, so a botched approach could not be
+    // salvaged at all.
+    //
+    // What the armour actually does is swing all four repulsors round to face the way it
+    // is still going and burn. So the retro force opposes the BODY-FRAME VELOCITY, all
+    // three axes of it, which kills drift and forward run together and lines up exactly
+    // with the brake pose the rig now holds. Capped so it can never add speed backwards
+    // once the velocity it is fighting is gone.
+    if (back > 0.01) {
+      _bv.copy(this.velocity).applyQuaternion(_q.copy(this.quaternion).invert());
+      const bs = _bv.length();
+      if (bs > 0.05) {
+        // Enough force to stop from top speed in about 3.5 s, and never more than the
+        // impulse that would zero the velocity this tick.
+        const want = back * spec.main * BRAKE_K * power;
+        const maxNow = (bs / dt) * spec.mass;
+        _bv.multiplyScalar(-Math.min(want, maxNow) / bs);
+        _f.add(_bv);
+      }
+    }
     _f.x += cmd.lateral * spec.lateral * power;
     _f.y += cmd.vertical * spec.vertical * power;
 
@@ -470,6 +507,8 @@ export class FlightModel {
   resolveGround(world, dt) {
     this.impact = 0;
     const wasGrounded = this.grounded;
+    // How fast he was travelling on the way in, before the ground took it away.
+    this._arriveSpeed = this.velocity.length();
     this.grounded = false;
     this.contact = false;
     if (!world) return;
@@ -503,6 +542,25 @@ export class FlightModel {
     if (this.impact > 11) {
       const dmg = Math.pow((this.impact - 11) / 85, 1.5) * 0.9 * (1400 / this.integrityMax);
       this.integrity = clamp(this.integrity - dmg, 0, 1);
+    }
+    // THE ARRIVAL — the superhero landing. Latched on the CROSSING into contact, so a suit
+    // resting on a roof does not re-land every tick.
+    //
+    // Triggered on the speed the armour ARRIVED at, not on the vertical closing speed the
+    // ground test reports. Measured: dropped from 120 m with a 90 m/s head start and
+    // hover off, the impact figure at touchdown was 5.4 m/s — vertical drag and the body's
+    // own lift bleed a fall off almost completely, so a 12 m/s threshold on that number is
+    // one the game can essentially never reach and the pose would never have played once.
+    // Total approach speed is both reachable and the right thing to read anyway: coming in
+    // fast and stopping dead is the shot, whatever direction you came from.
+    if (this.contact && !wasGrounded && this._arriveSpeed > 12) {
+      this.landHard = Math.min(1, 0.25 + (this._arriveSpeed - 12) / 45);
+      this.landT = 0;
+    }
+    if (this.landHard > 0) {
+      this.landT += dt;
+      // 1.05 s: the drop, the hold on the fist, and standing back up out of it.
+      if (this.landT > 1.05 || (!this.grounded && this.landT > 0.25)) this.landHard = 0;
     }
     if (this.grounded && !wasGrounded) { /* landing settle handled by caller via .impact */ }
 
@@ -549,6 +607,7 @@ export default {
     const model = new FlightModel(ARMOR_SPECS.mk3);
     const input = new Input(ctx.renderer.domElement);
     const poses = new Poses();
+    const thrustFX = new ThrustFX(ctx);
 
     // A stand-in body so flight is visible and testable before suit/ lands. It hides
     // itself the moment the real armour exists.
@@ -573,6 +632,7 @@ export default {
       model,
       input,
       poses,
+      thrustFX,
       active: false,
       proxy,
       position: model.position,
@@ -702,7 +762,12 @@ export default {
     // View toggle BEFORE the early return. It used to sit at the bottom of this function,
     // which meant it only ran while flying — on foot the key did nothing at all.
     if (input.tapped('KeyV')) ctx.state.view = ctx.state.view === 'first' ? 'third' : 'first';
-    if (!api.active) { input.consumeMouse(); input.consumeWheel(); input.endStep(); return; }
+    if (!api.active) {
+      // Kill the plumes on the way out. They live on the suit's own pivots, so leaving
+      // them lit would weld a repulsor flame to an armour standing in the workshop.
+      api.thrustFX.update(dt, model, cmd, ctx);
+      input.consumeMouse(); input.consumeWheel(); input.endStep(); return;
+    }
 
     readCommand(input, cmd);
     if (api.forceCmd) {
@@ -723,6 +788,13 @@ export default {
 
     if (model.impact > 4) ctx.bus.emit('impact', { force: model.impact, point: model.position.clone() });
 
+    // The crater. Emitted on the frame the landing latches, and only then.
+    if (model.landHard > 0 && !api._landed) {
+      api._landed = true;
+      ctx.bus.emit('flight:land', { force: model.landHard, point: model.position.clone() });
+      ctx.bus.emit('impact', { force: 8 + model.landHard * 22, point: model.position.clone(), source: 'land' });
+    } else if (model.landHard <= 0) api._landed = false;
+
     // Body visual: the real armour if the suit task has landed, otherwise the proxy.
     //
     // `ctx.suit.root` is an empty holder group that exists from boot and is only filled
@@ -732,6 +804,8 @@ export default {
     // it. `rig` is the thing that only exists once an armour is actually on.
     // Poses first: the suit's placement below reads this frame's leanPitch from it.
     api.poses.update(dt, model, cmd, ctx);
+    // ...and the plumes last of all, at the bottom of this function, once the rig has been
+    // posed and placed: they hang off the emitter pivots and read their WORLD positions.
 
     const suitOn = !!(ctx.suit && ctx.suit.rig && ctx.suit.root && ctx.suit.root.visible);
     const suitRoot = suitOn ? ctx.suit.root : null;
@@ -749,13 +823,20 @@ export default {
       //
       // The offset is rotated by the SAME quaternion, which keeps the body's centre on the
       // flight model's point mass instead of swinging the whole armour out on a 1 m arm.
-      _q2.setFromAxisAngle(X_AXIS, (ctx.flight.poseParams && ctx.flight.poseParams.leanPitch) || 0);
+      const pp = ctx.flight.poseParams;
+      _q2.setFromAxisAngle(X_AXIS, (pp && pp.leanPitch) || 0);
       _q3.copy(model.quaternion).multiply(_q2);
+      // ...and the roll into a sideways slide, about the body's own Z, after the pitch so
+      // it banks the laid-down silhouette rather than twisting it about the world axis.
+      if (pp && Math.abs(pp.leanRoll) > 0.001) _q3.multiply(_q4.setFromAxisAngle(Z_AXIS, pp.leanRoll));
       _v.copy(FEET_OFFSET).applyQuaternion(_q3);
       suitRoot.position.copy(model.position).add(_v);
       suitRoot.quaternion.copy(_q3);
     } else {
-      api.proxy.visible = ctx.state.view === 'third';
+      // Only ever a STAND-IN for an armour that has not finished loading. Without the
+      // armour test this dark red capsule is what you turn into the moment you take a suit
+      // off — the red pill.
+      api.proxy.visible = ctx.state.view === 'third' && !!ctx.state.armor;
       api.proxy.position.copy(model.position);
       api.proxy.quaternion.copy(model.quaternion);
     }
@@ -785,6 +866,10 @@ export default {
     } else if (api._alarmed && model.integrity > 0.5 && model.ice < 0.5) {
       api._alarmed = false;
     }
+
+    // Plumes and flight trails, after the rig has been posed and placed above: they read
+    // the emitter pivots' world positions, so anything earlier is a frame behind.
+    api.thrustFX.update(dt, model, cmd, ctx);
 
     input.endStep();
   },

@@ -223,7 +223,14 @@ export async function buildEnvironment(ctx) {
     _probeT: 0,
     rate: 1 / 0.9,    // how fast set() walks k to its target, per second
     current: 'exterior',
-    _cube: 'exterior',
+    // null, NOT 'exterior'. The swap below is guarded on `wantCube !== this._cube`, and
+    // seeding this with the state the game boots in meant the guard was false on the very
+    // first _apply() and every one after it: scene.environment was never assigned at all
+    // unless you walked down to the workshop and back up again, which is the only way the
+    // value ever changed. Every metal in the game outdoors — all five armours, at
+    // metalness 1 with nothing to reflect — rendered as a black silhouette with a specular
+    // highlight, which is exactly what the chase shots came back with.
+    _cube: null,
 
     // Drive the mix directly. This is what onfoot.js calls every step while the player
     // is on the stairs, so the light tracks his feet.

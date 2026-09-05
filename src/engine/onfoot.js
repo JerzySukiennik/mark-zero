@@ -574,6 +574,40 @@ export default {
         }
       }
 
+      // ------------- step back into a parked suit ---------------------------
+      // An armour you climbed out of stands where you left it (suit/suitup.js). It is not
+      // one of the display cases, so pickCase never sees it; it gets its own prompt.
+      const parked = ctx.suit && ctx.suit.parked;
+      const parkedNear = parked &&
+        Math.hypot(P.pos.x - parked.pos.x, P.pos.z - parked.pos.z) < 2.4 &&
+        Math.abs(P.pos.y - parked.pos.y) < 2.6;
+      // ONLY while standing at it. Taking the branch whenever a shell existed anywhere in
+      // the world swallowed the display cases' own prompt, so after stepping out of a Mk
+      // III you could get back into that one and never pick a different armour — which is
+      // the exact thing taking it off was for.
+      if (parkedNear && !chosen) {
+        const inRange = true;
+        const holding = input && input.action('interact') && !st.paused;
+        if (inRange && holding) {
+          hold = Math.min(HOLD_TIME, hold + dt);
+          if (hold >= HOLD_TIME) {
+            hold = 0;
+            api.active = false;
+            api.ownsCamera = false;
+            if (ctx.ui) ctx.ui.prompt(null);
+            ctx.bus.emit('suit:reenter');
+            return;
+          }
+        } else if (!inRange) hold = 0;
+        else hold = Math.max(0, hold - dt * 2.2);
+        if (ctx.ui) {
+          ctx.ui.prompt(inRange
+            ? { name: parked.name, sub: 'STEP BACK IN', key: 'F', progress: hold / HOLD_TIME }
+            : null);
+        }
+        return;
+      }
+
       // ------------- armor selection ----------------------------------------
       if (!chosen) {
         const near = pickCase(cases, P.pos, ctx.camera);
@@ -613,6 +647,9 @@ export default {
     };
 
     function startSuitup(c) {
+      // suit/ holds exactly one rig, so a new armour replaces whatever shell was standing
+      // in the world. Clear the marker with it or the prompt outlives the suit it names.
+      if (ctx.suit) ctx.suit.parked = null;
       ctx.state.mode = 'suitup';
       api.active = false;
       api.ownsCamera = false;   // hand the camera to cameraRig for the ritual

@@ -20,6 +20,8 @@ export default {
 
   async init(ctx) {
     const vfx = new VFX(ctx);
+    const _up = new THREE.Vector3();
+    const _at = new THREE.Vector3();
     const bolts = new ProjectileSystem(ctx, vfx);
 
     let cooldown = 0;
@@ -156,6 +158,24 @@ export default {
     // --- input -------------------------------------------------------------------------
     // flight/input.js may publish 'input:fire'. If it does, we listen and nothing else.
     // If it does not, we bind the mouse ourselves so the game is playable either way.
+    /**
+     * THE MARK A LANDING LEAVES. flight/ has emitted 'impact' since it was written and the
+     * only two listeners were a camera shake and a thud — an armour could hit a road at
+     * 40 m/s and the road would be spotless. A hard arrival throws dust and cracks the
+     * surface under the fist, which is the half of the superhero landing that is not pose.
+     * Scaled off the closing speed and skipped below 12 m/s, so putting the feet down
+     * gently stays clean.
+     */
+    ctx.bus.on('flight:land', ({ force, point }) => {
+      if (!point) return;
+      const f = Math.min(1, force);
+      _up.set(0, 1, 0);
+      _at.copy(point);
+      _at.y -= 1.0;                       // point mass -> soles (models/CONTRACT.md)
+      vfx.impact(_at, _up, 'concrete', 0.6 + f * 2.2);
+      vfx.flashLight(_at, 2.4 * f, 0.22);
+    });
+
     ctx.bus.on('input:fire', p => { busFireSeen = true; fire(p || {}); });
     const el = ctx.renderer.domElement;
     el.addEventListener('pointerdown', e => {

@@ -273,3 +273,50 @@ camera nudge away from flickering):
 
 If a future change needs the flag off, it must first raise `near` and prove these numbers
 stay at zero. Turning it off on its own brings the flicker back over the town and at altitude.
+
+## Flight VFX, poses and the environment map (2026-09-05)
+
+**`src/flight/thrustfx.js` is new.** The rig has always had four correctly-oriented emitter
+pivots (`piv_thrusterL/R`, `piv_palmL/R`) and nothing ever drew into them, so the armour
+flew with no repulsors and no flight line at all. The module hangs a cone plus a glow
+sprite off each pivot, gives the boots one point light each, and streams two vertex-alpha
+ribbons behind them above 40 m/s. It is driven from `flight.js`'s update, at the very end,
+after the rig has been posed and placed — it reads emitter WORLD positions, so anything
+earlier is a frame behind. It is not a registry module; `registry.js` stays frozen.
+
+Additive white over a lit ocean cannot be subtle. The first pass ran the sprites at 5–10
+radii and full opacity and the four of them merged into one blown-out streak that hid the
+whole armour (`shots/fix/6_cruise_env.png` against `8_nofx.png`, the identical frame with
+the plumes off). Halved on both size and opacity. The cones carry the shape; the sprite is
+only there so the source is a point rather than a line seen edge-on.
+
+**The environment map was never applied.** `env.js` swapped the PMREM cube under
+`if (wantCube !== this._cube)` and seeded `_cube` with `'exterior'` — the state the game
+boots in — so the guard was false on the first `_apply()` and every one after it.
+`scene.environment` stayed null unless you walked down to the workshop and back up. Every
+metal outdoors, all five armours at metalness 1 with nothing to reflect, rendered as a
+black silhouette with a specular highlight. Seeded `null` instead.
+
+**Poses.** `POSES` had no `brake` key at all; `POSES[name] || POSES.stand` handed back the
+standing pose, so holding S changed the physics a little and the silhouette not at all.
+`brake` and `land` are authored now, and `cruise`'s arms are swept down the flanks rather
+than held straight out to the sides — the latter is a hero-shot hold, and at 300 m/s it
+reads as a crucifix sliding through the sky.
+
+**S is a real stop.** It opposes the body-frame VELOCITY on all three axes at 0.85 of the
+mains, capped at the impulse that would zero the velocity this tick, so it kills sideways
+drift too. Measured: 376 m/s to rest in 5.25 s over 819 m. The old forward-axis-only
+`spec.retro` took about nineteen seconds.
+
+**First person at speed.** The eye was pushed out of the helmet along the AIRFRAME's
+forward axis. In cruise the body is leaned 1.32 rad inside the airframe, so that push ran
+sideways through the skull and 0.17 m never left the shell: 23 of 25 rays across the
+frustum hit `helmet_1 / mat_primary` from the inside — the red metal filling the screen.
+The push comes off the helmet's own quaternion now, at 0.30 m. Measured after: 0 of 25.
+
+**Doffing leaves the armour standing.** It used to unequip and hide the rig, and flight/'s
+stand-in for "no rig loaded yet" is a dark red capsule — so stepping out of a Mk III turned
+the player into a red pill. The shell now stays where you left it with every plate back and
+the visor up; walking to it and holding F emits `suit:reenter`, which closes the faceplate
+and re-emits `suitup:done`. Refused in mid-air: doffing over the Pacific left a Mk III
+hanging at y = 10.2 with the boy falling away underneath it.

@@ -23,6 +23,13 @@ import mk3 from './sequences/mk3.js';
 import mk42 from './sequences/mk42.js';
 import mk50 from './sequences/mk50.js';
 
+// Display names for the parked-shell prompt. Deliberately a local table and not an import
+// of flight/'s ARMOR_SPECS: suit/ must not depend on flight/ (registry.js fixes the init
+// order the other way round), and five strings are cheaper than that edge.
+const SPEC_NAMES = {
+  mk1: 'MARK I', mk2: 'MARK II', mk3: 'MARK III', mk42: 'MARK XLII', mk50: 'MARK L',
+};
+
 const SEQUENCES = { mk1, mk2, mk3, mk42, mk50 };
 
 export default {
@@ -222,6 +229,15 @@ export default {
       if (self.playing || doffing) return;
       const suit = ctx.suit;
       if (!suit || !suit.rig || !ctx.state.armor) return;
+      // Not in mid-air. The armour is left standing where you stepped out of it, and
+      // stepping out over the Pacific left a Mk III hanging at y = 10.2 with the boy
+      // falling away underneath it and no way to reach it again — measured, doffing at
+      // 1366 m out to sea. Put it down first.
+      const fm = ctx.flight && ctx.flight.model;
+      if (ctx.state.mode === 'flight' && fm && !fm.grounded) {
+        if (ctx.ui) ctx.ui.say('LAND FIRST, SIR.');
+        return;
+      }
       const nano = ctx.state.armor === 'mk50' && suit.nano;
       doffing = { t: 0, dur: nano ? 1.1 : 1.9, nano: !!nano, id: ctx.state.armor };
       ctx.bus.emit('faceplate', { open: true });
@@ -229,7 +245,30 @@ export default {
       ctx.bus.emit('suitup:doff', { id: doffing.id });
     });
 
+    /**
+     * Walk back into the armour you left standing. Emitted by onfoot/ when F is held on a
+     * parked shell. No gantry, no plates flying in: the suit is already assembled, so all
+     * that is left is to close the faceplate and hand control back to flight/, which is
+     * exactly what `suitup:done` means to every listener in the game.
+     */
+    ctx.bus.on('suit:reenter', () => {
+      const suit = ctx.suit;
+      if (self.playing || doffing || !suit || !suit.parked || !suit.rig) return;
+      const id = suit.parked.id;
+      suit.parked = null;
+      suit.showBody(false);                  // he is inside it again
+      suit.setPose('stand', true);
+      ctx.bus.emit('faceplate', { open: false });
+      if (suit.faceplateCtl) suit.faceplateCtl.close();
+      ctx.state.armor = id;
+      ctx.state.suitClosed = true;
+      ctx.state.faceplateOpen = false;
+      self.id = id; self.progress = 1;
+      ctx.bus.emit('suitup:done', id);
+    });
+
     ctx.bus.on('restart', () => {
+      if (ctx.suit) ctx.suit.parked = null;
       self.cancel();
       stow = 0; hold = 0;
       stage.set(0);
@@ -270,17 +309,45 @@ export default {
           }
         }
         if (k >= 1) {
+          // The armour is LEFT STANDING. It used to be unequipped and hidden outright, and
+          // since flight/ keeps a dark red capsule as its stand-in for "no rig loaded yet",
+          // stepping out of a Mk III turned the player into a red pill — Jurek's words, and
+          // exactly what the code did. An empty suit is a thing in the world: it stays
+          // where you left it, open, and you walk back into it.
           if (suit) {
-            suit.showBody(true);
-            if (suit.unequip) suit.unequip();
-            if (suit.setVisible) suit.setVisible(false);
-            suit.followPlayer = true;
+            if (suit.rig) {
+              for (const n of Object.keys(suit.rig.plates || {})) suit.rig.setPlateVisible(n, true);
+            }
+            // The Mk L's nano ran back into the reactor to open; put the shell back so
+            // there is something standing there to climb into.
+            if (doffing.nano && suit.nano) { suit.nano.setEdge(1.6); suit.nano.setActive(false); }
+            suit.showBody(true);              // the boy, standing next to it
+            suit.setVisible(true);            // ...and the armour, still standing
+            suit.setPose('stand', true);
+            suit.followPlayer = false;        // it stays put; it is furniture now
+            // Drop it onto its feet. models/CONTRACT.md puts the armour's origin at the
+            // SOLES, and the flight model is a point mass one metre above them, so a root
+            // left where flight/ was writing it leaves the suit standing on thin air a
+            // body-length up. onfoot/ stands the boy at exactly the same y.
+            if (ctx.flight && ctx.flight.model) {
+              suit.root.position.copy(ctx.flight.model.position);
+              suit.root.position.y -= 1.0;
+              suit.root.rotation.set(0, ctx.flight.model.rotation
+                ? ctx.flight.model.rotation.y : suit.root.rotation.y, 0);
+            }
+            suit.parked = {
+              id: doffing.id,
+              name: SPEC_NAMES[doffing.id] || String(doffing.id).toUpperCase(),
+              pos: suit.root.position.clone(),
+            };
           }
           ctx.state.armor = null;
           ctx.state.suitClosed = false;
-          ctx.state.faceplateOpen = false;
+          ctx.state.faceplateOpen = true;    // it is standing there with the visor up
           ctx.state.mode = 'onfoot';
+          if (ctx.flight && ctx.flight.deactivate) ctx.flight.deactivate();
           ctx.bus.emit('suitup:doffed', { id: doffing.id });
+          if (ctx.ui) ctx.ui.say('SUIT PARKED. PRESS F TO STEP BACK IN.');
           doffing = null;
         }
         return;

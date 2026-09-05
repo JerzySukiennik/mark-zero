@@ -17,7 +17,7 @@
 // the suit module has not landed yet, the numbers still publish on ctx.flight.pose so
 // vfx/audio can read them.
 
-const NAMES = ['stand', 'hover', 'cruise', 'brake', 'fire'];
+const NAMES = ['stand', 'hover', 'cruise', 'brake', 'fire', 'land'];
 
 function approach(cur, target, rate, dt) {
   const d = target - cur;
@@ -40,7 +40,8 @@ export class Poses {
       palmDown: 0,     // hover: forearms rotated so the repulsors face the ground
       legTuck: 0,      // 0 = stance apart, 1 = legs together and pointed
       kneeBend: 0,
-      leanPitch: 0,    // radians, body pitch relative to the airframe (head leads)
+      leanPitch: 0,   // radians, body pitch relative to the airframe (head leads)
+      leanRoll: 0,     // roll of the body into a sideways slide, radians
       headYaw: 0,      // the head leads a turn slightly
       headPitch: 0,
       fireLeft: 0,
@@ -60,7 +61,10 @@ export class Poses {
 
     // --- pick the pose -------------------------------------------------------------------
     let name;
-    if (model.grounded && model.thrustMag < 0.1) name = 'stand';
+    // The landing beats everything: you do not get to strike a cruise pose while you are
+    // still folded over your own fist.
+    if (model.landHard > 0) name = 'land';
+    else if (model.grounded && model.thrustMag < 0.1) name = 'stand';
     else if (cmd.fire) name = 'fire';
     else if (movingBackwards || retro) name = 'brake';
     else if (fast > 0.35) name = 'cruise';
@@ -94,6 +98,19 @@ export class Poses {
     // man standing in the sky being slid forwards — which is exactly what it looked like.
     // Braking keeps the body upright and feet-first, which is what makes a stop read.
     p.leanPitch = approach(p.leanPitch, b.cruise * -1.32 + b.fire * -0.5 + b.hover * 0.06, 2.5, dt);
+
+    // BANK INTO THE SLIDE. Holding A or D used to move the airframe sideways and change
+    // the silhouette by nothing at all — the suit slid left like a chess piece, feet still
+    // pointing down the flight axis. Jurek: "when I fly sideways he does nothing to fly
+    // sideways". Rolling the body towards the slide is what sells it: the boots and the
+    // palm on that side swing round underneath the direction of travel, which is both what
+    // the reference frames do and what the thrust vector would actually have to be.
+    //
+    // Visual only, applied by flight.js next to leanPitch. The flight model's own roll is
+    // untouched, so control is unchanged — 0.62 rad is 35 degrees, which reads hard
+    // without turning the horizon over.
+    const slide = Math.max(-1, Math.min(1, cmd.lateral || 0));
+    p.leanRoll = approach(p.leanRoll, slide * 0.62 * (0.35 + 0.65 * fast), 3.0, dt);
 
     // Firing hands follow the trigger, with the off hand trailing slightly.
     p.fireRight = approach(p.fireRight, cmd.fire ? 1 : 0, 9, dt);

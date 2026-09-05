@@ -28,6 +28,7 @@ const _v = new THREE.Vector3();
 const _v2 = new THREE.Vector3();
 const _q = new THREE.Quaternion();
 const _q2 = new THREE.Quaternion();
+const _q3 = new THREE.Quaternion();
 const _e = new THREE.Euler(0, 0, 0, 'YXZ');
 const _m = new THREE.Matrix4();
 
@@ -42,7 +43,7 @@ const _m = new THREE.Matrix4();
 // because then the eye follows the pose — the head leads a turn, and the view leads
 // with it.
 const EYE = new THREE.Vector3(0, 0.78, -0.14);
-const EYE_FWD = 0.17;          // push out through the faceplate so it never clips
+const EYE_FWD = 0.30;          // push out through the faceplate so it never clips
 const _eye = new THREE.Vector3();
 
 function damp(current, target, tau, dt) {
@@ -206,8 +207,20 @@ function firstPerson(dt, ctx, rig, model, speedFrac) {
   if (head) {
     head.updateWorldMatrix(true, false);
     head.getWorldPosition(_eye).sub(model.position);
-    // Out through the faceplate, along the body's forward axis.
-    _v2.set(0, 0, -EYE_FWD).applyQuaternion(model.quaternion);
+    // Out through the faceplate, along the HELMET's own forward axis — not the airframe's.
+    //
+    // This was the red metal filling the screen at speed. The head pivot sits INSIDE the
+    // skull, so the view only works if something pushes it out through the visor. That
+    // push used model.quaternion, which is the direction of flight; in cruise the body is
+    // leaned 1.32 rad (76 degrees) inside the airframe, so "forward along the flight axis"
+    // runs sideways through the helmet and 0.17 m of it never left the shell. Measured at
+    // 342 m/s with 25 rays across the frustum: 23 of them hit helmet_1 / mat_primary, the
+    // red plate, from the inside.
+    //
+    // Taking the axis off the helmet itself makes the push follow the lean, and 0.30 m
+    // clears the deepest of the five shells (Mk I is 0.26 m from pivot to visor).
+    head.getWorldQuaternion(_q3);
+    _v2.set(0, 0, -EYE_FWD).applyQuaternion(_q3);
     _eye.add(_v2);
     // Back into helmet axes so compliance and shake add in the same frame as below.
     _eye.applyQuaternion(_q2.copy(model.quaternion).invert());
@@ -285,9 +298,22 @@ function thirdPerson(dt, ctx, rig, model, speedFrac) {
     if (rig.chasePos.y < floor) rig.chasePos.y = floor;
   }
 
-  // Look ahead of the suit, not at it.
+  // Look ahead of the suit — but only just ahead, and not at all while it is shooting.
+  //
+  // The lead used to be 6 + 26 * speedFrac, which is thirty-two metres down the flight
+  // axis at cruise. A camera aiming thirty-two metres in front of its subject does not
+  // frame the subject: it frames the empty air the subject is heading into, and puts the
+  // suit itself down in the corner. That is Jurek's "in third person he just keeps flying
+  // forwards — he should always be in the middle of the screen", and it is worst exactly
+  // when you care most, because the lead grows with speed.
+  //
+  // Eight metres at cruise still gives the shot somewhere to go and keeps the armour on
+  // the middle third. Firing collapses it to zero: when the repulsors are out the suit IS
+  // the shot, and the camera holds it dead centre.
+  const firing = (ctx.flight && ctx.flight.pose === 'fire') ? 1 : 0;
+  rig.lookLead = damp(rig.lookLead || 0, firing ? 0 : (2 + speedFrac * 6), 0.28, dt);
   _v2.set(0, 0, -1).applyQuaternion(model.quaternion)
-    .multiplyScalar(6 + speedFrac * 26).add(model.position);
+    .multiplyScalar(rig.lookLead).add(model.position);
   _v2.y += 0.5;
   // Same feed-forward as the boom, for the same reason. Without it the aim point settles
   // v * 0.16 s behind where it was asked to look, which at cruise is nearly fifty metres

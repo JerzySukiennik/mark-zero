@@ -85,13 +85,21 @@ export const POSES = {
   // straight off that frame after a first pass guessed "arms swept back like a dart" and
   // rendered a boy hailing a taxi (shots/suitup/P_pose_cruise.png, second pass).
   cruise: {
-    piv_shoulderL: { dir: D(0.93, -0.20, -0.30), twist: -10 },
-    piv_shoulderR: { dir: D(-0.93, -0.20, -0.30), twist: 10 },
-    piv_elbowL: { dir: D(-0.04, -0.99, -0.10) },     // all but straight
-    piv_elbowR: { dir: D(0.04, -0.99, -0.10) },
+    // SWEPT BACK, not held out. The first version of this pose put the arms straight out
+    // to the sides, perpendicular to the spine, authored off mk3_flight_a.jpg — and that
+    // frame is a hero shot, a deliberate hold for the camera, not what the suit does when
+    // it is going somewhere. Laid down at 76 degrees and travelling, arms out to the sides
+    // is a crucifix sliding through the sky; Jurek's word for it was that the suit "spread
+    // its arms strangely". At speed the arms run down the flanks with the fists past the
+    // hips, which is also the only reading that puts the palm repulsors where their thrust
+    // vector belongs — behind him.
+    piv_shoulderL: { dir: D(0.20, -0.95, 0.24), twist: -8 },
+    piv_shoulderR: { dir: D(-0.20, -0.95, 0.24), twist: 8 },
+    piv_elbowL: { dir: D(-0.02, -0.98, 0.19) },      // all but straight
+    piv_elbowR: { dir: D(0.02, -0.98, 0.19) },
     // Palms trail backwards: the hand repulsors are adding thrust, not braking.
-    piv_palmL: { aimWorld: D(0.10, -0.28, 0.95) },
-    piv_palmR: { aimWorld: D(-0.10, -0.28, 0.95) },
+    piv_palmL: { aimWorld: D(0.08, -0.25, 0.96) },
+    piv_palmR: { aimWorld: D(-0.08, -0.25, 0.96) },
     piv_hipL: { dir: D(-0.04, -0.99, 0.09) },        // legs together, toes pointed
     piv_hipR: { dir: D(0.04, -0.99, 0.09) },
     piv_kneeL: { dir: D(0, -0.99, -0.10) },
@@ -137,6 +145,53 @@ export const POSES = {
     piv_kneeL: { dir: D(0, -0.97, 0.24) },
     piv_kneeR: { dir: D(0, -0.97, 0.24) },
     piv_chest: { dir: D(0, 0.99, 0.14) },
+  },
+
+  // THE STOP. poses.js has been asking for this pose by name since it was written, and
+  // POSES never had a `brake` key — `POSES[name] || POSES.stand` quietly handed back the
+  // standing pose instead, so holding S changed the physics slightly and the silhouette
+  // not at all. That is the whole of "it tries to stop but very weakly": there was nothing
+  // to see.
+  //
+  // The film beat: the body snaps UPRIGHT out of the dive, and all four repulsors — both
+  // palms and both boots — swing round to point where he is still travelling. The arms go
+  // out and forward with the palms square to the direction of flight, the legs come
+  // forward underneath, and the whole armour becomes a parachute made of thrust.
+  brake: {
+    piv_shoulderL: { dir: D(0.34, -0.42, -0.84), twist: -20 },
+    piv_shoulderR: { dir: D(-0.34, -0.42, -0.84), twist: 20 },
+    piv_elbowL: { dir: D(-0.05, -0.30, -0.95) },     // straight out front
+    piv_elbowR: { dir: D(0.05, -0.30, -0.95) },
+    // Square to the direction of travel. This is the shot everyone remembers.
+    piv_palmL: { aimWorld: D(0.05, -0.12, -0.99) },
+    piv_palmR: { aimWorld: D(-0.05, -0.12, -0.99) },
+    piv_hipL: { dir: D(0.12, -0.72, -0.68) },        // knees come up in front
+    piv_hipR: { dir: D(-0.12, -0.72, -0.68) },
+    piv_kneeL: { dir: D(0, -0.86, -0.51) },
+    piv_kneeR: { dir: D(0, -0.86, -0.51) },
+    piv_ankleL: { dir: D(0, -0.55, -0.83) },         // boot jets forward too
+    piv_ankleR: { dir: D(0, -0.55, -0.83) },
+    piv_chest: { dir: D(0, 0.98, 0.20) },            // chest open, leaning back into it
+    piv_neck: { dir: D(0, 0.97, -0.24) },
+  },
+
+  // The landing. Left fist into the ground, right arm trailing, right knee down, head up.
+  // Used for a hard arrival only — anything under 12 m/s just puts the feet down.
+  land: {
+    piv_shoulderL: { dir: D(0.30, -0.93, -0.22), twist: -14 },
+    piv_shoulderR: { dir: D(-0.62, -0.44, 0.65), twist: 24 },
+    piv_elbowL: { dir: D(0.06, -0.99, 0.10) },       // straight down into the ground
+    piv_elbowR: { dir: D(-0.20, -0.62, 0.76) },      // trailing behind
+    piv_palmL: { aimWorld: D(0, -1, 0) },
+    piv_palmR: { aimWorld: D(-0.30, -0.55, 0.78) },
+    piv_hipL: { dir: D(0.22, -0.83, -0.51) },        // left leg forward, deep
+    piv_hipR: { dir: D(-0.16, -0.78, 0.60) },        // right knee back and down
+    piv_kneeL: { dir: D(0, -0.93, 0.36) },
+    piv_kneeR: { dir: D(0, -0.55, -0.84) },
+    piv_ankleL: { dir: D(0, -0.96, -0.28) },
+    piv_ankleR: { dir: D(0, -0.72, -0.69) },
+    piv_chest: { dir: D(0, 0.94, -0.34) },           // folded forward over the fist
+    piv_neck: { dir: D(0, 0.86, -0.51) },            // ...but the head is up
   },
 
   // Feet apart, arms a little clear of the body: what the boy stands in while the
