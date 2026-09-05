@@ -1,0 +1,19 @@
+# Reference library: film stills and studio photography downloaded as a quality bar for
+# the build. Third-party material — it never goes to a public repo.
+reference/
+
+# Working screenshots and captured frames from automated runs.
+shots/
+
+# Model sources and preview renders. The game loads only the .glb files.
+models/*.png
+models/*.py
+models/*-notes.md
+
+# Orchestration script for the build loop, not part of the game.
+tools/
+
+.DS_Store
+
+# Raw downloaded audio before conversion. The game plays the .mp3 files in audio/.
+.audio-cache/
