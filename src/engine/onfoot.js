@@ -286,10 +286,21 @@ export default {
       const s = ctx.suit;
       if (s && s.showBody) s.showBody(true);
       if (ctx.flight && ctx.flight.model) {
-        // Stand him where the armour was standing, on his feet.
+        /* A STEP OUT, not a teleport into the same spot.
+         * Standing him exactly where the armour is puts the boy and the empty suit in the
+         * same cubic metre: the first thing you see after taking it off is the inside of
+         * its chest. A stride forward of the armour's own facing, turned back to look at
+         * it, reads as stepping out of the thing and leaves it in frame — which matters
+         * now that it stays standing there waiting to be walked back into.
+         */
         const m = ctx.flight.model;
-        P.pos.set(m.position.x, m.position.y - 1.0, m.position.z);
+        const yaw = (ctx.suit && ctx.suit.root) ? ctx.suit.root.rotation.y : 0;
+        const fx = -Math.sin(yaw), fz = -Math.cos(yaw);      // the armour faces -Z locally
+        P.pos.set(m.position.x + fx * 1.25, m.position.y - 1.0, m.position.z + fz * 1.25);
         P.vel.set(0, 0, 0);
+        // Turn round and look at what you just climbed out of.
+        P.yaw = P.yawSmooth = yaw + Math.PI;
+        P.pitch = P.pitchSmooth = 0;
       }
     });
     ctx.bus.on('restart', () => {

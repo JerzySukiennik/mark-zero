@@ -327,7 +327,15 @@ export default {
       // rather than off the open/close call, so a critic's faceplateCtl.snap(0.5) and the
       // player's key both land the same. Never while a sequence is running: during a
       // suit-up the whole boy is on show and suitup/ owns which parts of him are visible.
-      if (ctx.state.suitClosed && !(ctx.suitup && ctx.suitup.playing)) {
+      /* ...and never while the armour is being taken OFF, which is its own kind of
+       * sequence. A doff opens the faceplate first, and this line reads an open faceplate
+       * as "show the face" — head only, because the rest of him is inside finished armour.
+       * Then the plates peel away and there is nothing left but a head hanging in the air.
+       * That is Jurek's "when I take the suit off there's my head levitating for a moment".
+       * suitup/ owns what is visible for the whole of a doff, exactly as it does for a
+       * suit-up. */
+      if (ctx.state.suitClosed &&
+          !(ctx.suitup && (ctx.suitup.playing || ctx.suitup.doffing))) {
         // Not on the Mk I. Its helmet is a welded box with a closed interior wall behind
         // the visor and no room for a head: with the visor up you saw the tip of a nose
         // floating in a steel cube, which is worse than the empty slot the reference

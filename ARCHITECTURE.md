@@ -564,3 +564,26 @@ Verified in `tools/tunnel-probe.html`:
     bore clear?      0 of 40 segments blocked to a 0.9 m sweep along the centre-line
     bore vs terrain  32 points under the surface, 9 in open air, breaks out at t = 0.80
     mouth            (-42, 86, -44), terrain there 45 m -> OPEN AIR
+
+### The levitating head, and stepping out of the armour
+
+Taking a suit off opens the faceplate first, and `suit.js` reads an open faceplate as "show
+the face" — **head only**, because the rest of the boy is inside finished armour and would
+z-fight through it. Then the doff peels the plates away and what is left is a head hanging
+in mid-air. That is "when I take the suit off there's my head levitating for a moment", and
+it was one line: the face logic guarded against a suit-up sequence running but not against a
+doff. `suitup` publishes `doffing` now and the guard covers both; the doff shows the whole
+boy from its first frame, so the plates come off around a person.
+
+He also used to be planted at exactly the armour's position, which puts the boy and the
+empty suit in the same cubic metre — the first thing you saw after taking it off was the
+inside of its own chest. He steps out 1.25 m along the armour's facing and turns round to
+look at it, which reads as climbing out and keeps the suit in frame, and the suit is now a
+thing you walk back into.
+
+Verified end to end in `tools/doff-probe.html`:
+
+    grounded=true after 0.7 s, locomotion=walk
+    doff: floating-head frames 0/40, parked=true, armour still visible=true
+    boy stepped out 1.25 m from the armour, mode=onfoot
+    re-entry: armor=mk3, closed=true, parked=false, mode=flight

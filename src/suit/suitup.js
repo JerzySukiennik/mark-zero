@@ -55,6 +55,7 @@ export default {
 
     const self = {
       playing: false,
+      doffing: false,      // suit/ reads this: the face logic must keep out during a doff
       id: null,
       t: 0,
       progress: 0,
@@ -240,6 +241,12 @@ export default {
       }
       const nano = ctx.state.armor === 'mk50' && suit.nano;
       doffing = { t: 0, dur: nano ? 1.1 : 1.9, nano: !!nano, id: ctx.state.armor };
+      self.doffing = true;
+      /* The whole boy, from the first frame of the doff — not just his face.
+       * The plates are about to come off around him, and if only the head is showing what
+       * you watch is a head hanging in mid-air while the armour dissolves. */
+      suit.showFace(false);
+      suit.showBody(true);
       ctx.bus.emit('faceplate', { open: true });
       if (suit.faceplateCtl) suit.faceplateCtl.open();
       ctx.bus.emit('suitup:doff', { id: doffing.id });
@@ -346,6 +353,7 @@ export default {
           ctx.state.faceplateOpen = true;    // it is standing there with the visor up
           ctx.state.mode = 'onfoot';
           if (ctx.flight && ctx.flight.deactivate) ctx.flight.deactivate();
+          self.doffing = false;
           ctx.bus.emit('suitup:doffed', { id: doffing.id });
           if (ctx.ui) ctx.ui.say('SUIT PARKED. PRESS F TO STEP BACK IN.');
           doffing = null;
