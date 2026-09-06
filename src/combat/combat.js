@@ -14,6 +14,8 @@ import { VFX } from './vfx.js';
 import { ProjectileSystem } from './projectile.js';
 
 const DOWN_LOCAL = new THREE.Vector3(0, -1, 0);   // CONTRACT: palm emitter axis
+const _fwd2 = new THREE.Vector3();
+const _off = new THREE.Vector3();
 
 export default {
   id: 'combat',
@@ -129,6 +131,26 @@ export default {
       const dir = target.sub(em.pos);
       if (dir.lengthSq() < 1e-6) dir.copy(em.axis);
       dir.normalize();
+
+      /* NEVER SPAWN THE BOLT BEHIND THE EYE.
+       *
+       * The muzzle is the armour's real palm pivot, which is right — but at cruise the
+       * arms are swept back down the flanks and the first-person camera sits 0.30 m out
+       * through the faceplate, so the hands are genuinely BEHIND the view. Fire from there
+       * and the bolt is born off-screen and flies away from you: "the repulsor shots come
+       * out from behind the suit". It is worst on the first shot of a burst, before the
+       * fire pose has swung the arm forward.
+       *
+       * So the muzzle keeps its real position except when it is behind the camera plane,
+       * and then it slides forward along the shot line just far enough to clear it. The
+       * bolt still leaves the right hand in third person, where you can see the hand. */
+      if (ctx.state.view !== 'third') {
+        const cam = ctx.camera;
+        cam.getWorldDirection(_fwd2);
+        _off.copy(em.pos).sub(cam.position);
+        const ahead = _off.dot(_fwd2);
+        if (ahead < 0.45) em.pos.addScaledVector(dir, 0.45 - ahead);
+      }
 
       // A bolt fired from something already doing 290 m/s carries that speed with it, or a
       // shot taken at cruise appears to crawl out of the palm and get overtaken.

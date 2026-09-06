@@ -426,3 +426,16 @@ for this session (hidden, not compositing — the same suit-up measured 204 ms a
 consecutive runs). The material, light and program COUNTS above are graph facts and are
 reliable; the millisecond figures for compile warm-ups are not, beyond the living-room one
 which reproduced twice.
+
+### The muzzle is the real palm, except when that is behind your eye
+
+`combat.js` spawns a bolt at the armour's actual `piv_palm` pivot, which is correct and is
+what makes the shot leave the hand you can see in third person. But at cruise the arms are
+swept back down the flanks and the first-person camera sits 0.30 m out through the
+faceplate, so the hands are genuinely *behind* the view — the bolt was born off-screen and
+flew away from the player. That is "the repulsor shots come from behind the suit", and it is
+worst on the first shot of a burst, before the fire pose has swung the arm forward.
+
+The muzzle now keeps its real position unless it is behind the camera plane, in which case
+it slides forward along the shot line just far enough to clear it. Measured after: the bolt
+is born 0.74 m in front of the eye. Third person is untouched.
