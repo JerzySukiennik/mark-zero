@@ -16,6 +16,7 @@
 import * as THREE from 'three';
 import { Gantry, SuitStage } from './gantry.js';
 import { playerStance } from './suit.js';
+import { ScatteredSuit } from './scatter.js';
 import { meshesByPivot, PLATE_PIVOT } from './rig.js';
 import mk1 from './sequences/mk1.js';
 import mk2 from './sequences/mk2.js';
@@ -42,6 +43,9 @@ const SELF_DON = { mk3: true, mk50: true };
 
 const SEQUENCES = { mk1, mk2, mk3, mk42, mk50 };
 
+// Scratch — this runs every frame during a doff; allocate nothing.
+const _sp = new THREE.Vector3();
+
 export default {
   id: 'suitup',
 
@@ -49,6 +53,20 @@ export default {
     let active = null;         // { seq, api, t, resolve }
     let stow = 0;              // gantry retraction timer after a sequence ends
     let doffing = null;        // armour currently being taken off
+
+    /* THE ARMOUR THAT COMES APART. See suit/scatter.js.
+     *
+     * Jurek's rule for the Mark III: X and it falls to pieces on the ground; the pieces are
+     * real objects you can shove with your shins; then from anywhere on the map X again and
+     * each one lights its own repulsor and flies back onto you.
+     *
+     * Which armours do this: the ones that put themselves on and have PLATES to lose. The
+     * Mk L is `selfDon` too but it is nanotech — it flows back into the reactor and has no
+     * pieces to leave lying about — so it keeps its own doff. That makes this exactly the
+     * Mk III today, and correct for anything plate-built added later. */
+    const scatter = new ScatteredSuit(ctx);
+    // SELF_DON is the local table above — suit/ must not import flight/, see the note there.
+    const comesApart = id => !!SELF_DON[id] && id !== 'mk50';
     let viewBefore = null;     // the view the player chose, restored when the ritual ends
     let viewBeforeDoff = null; // ...and the same for stepping out of an armour
     let gantry = null;
@@ -155,6 +173,7 @@ export default {
         // The ring is the machine now: it opens for the whole sequence and shuts after.
         const ring = ctx.world && ctx.world.ring;
         if (ring) ring.set(1);
+        scatter.cancel();          // a new Mark: whatever was scattered is not coming back
         if (active) self.cancel();
 
         // Nobody else may drive the armour while the ritual is running. flight/ takes
@@ -408,7 +427,10 @@ export default {
         return;
       }
       const nano = ctx.state.armor === 'mk50' && suit.nano;
-      doffing = { t: 0, dur: nano ? 1.1 : 1.9, nano: !!nano, id: ctx.state.armor };
+      const apart = comesApart(ctx.state.armor);
+      // A scattering doff is short: it is a burst, not a slow undressing.
+      doffing = { t: 0, dur: nano ? 1.1 : (apart ? 0.35 : 1.9), nano: !!nano,
+                  apart, id: ctx.state.armor };
       self.doffing = true;
       /* The whole boy, from the first frame of the doff — not just his face.
        * The plates are about to come off around him, and if only the head is showing what
@@ -429,6 +451,29 @@ export default {
     ctx.bus.on('suit:reenter', () => {
       const suit = ctx.suit;
       if (self.playing || doffing || !suit || !suit.parked || !suit.rig) return;
+
+      /* AN ARMOUR IN PIECES IS CALLED, NOT CLIMBED INTO.
+       *
+       * X is the same key for both, and it has to be: there is no shell standing there to
+       * walk up to, so "press X again" is the only gesture that makes sense from across the
+       * map. The pieces fly to the player, and the re-entry below runs on the frame the last
+       * one clamps on — so everything downstream (flight activating, the view coming back,
+       * the boy going away) happens exactly once, in the usual place, and none of it has to
+       * know the armour arrived in thirty-seven parts.
+       *
+       * The rig is placed on the player and made to follow him FIRST. Every plate's home is
+       * computed from where the rig is, every frame, so the suit assembles around him while
+       * he walks rather than around the patch of floor he dropped it on. */
+      if (scatter.active) {
+        if (scatter.phase !== 'down') return;      // already on its way
+        const stand = playerStance(ctx);
+        if (stand) suit.place(stand.pos, stand.yaw);
+        suit.followPlayer = true;
+        scatter.recall(stand ? stand.pos : suit.root.position);
+        if (ctx.ui) ctx.ui.say('RECALLING.');
+        return;
+      }
+
       const id = suit.parked.id;
       /* THE ARMOUR COMES TO HIM, not the other way round.
        *
@@ -463,7 +508,20 @@ export default {
       ctx.bus.emit('suitup:done', id);
     });
 
+    /* ANY armour being installed ends a scatter — not just one that arrives through the
+     * ritual. `begin()` cancels it too, but that only covers the ritual path; `suit.wear()`
+     * and the debug route install an armour directly, and a scatter left running then goes
+     * on driving plate transforms on a rig that is now a DIFFERENT Mark. Measured: the Mk
+     * III's scatter survived into the Mk XLII and broke nine of its checks — the shell stood
+     * in pieces on top of the player and re-entry landed four metres out.
+     *
+     * suit/ emits this whenever a rig is actually installed, so it is the honest signal. */
+    ctx.bus.on('suit:equipped', () => scatter.cancel());
+
     ctx.bus.on('restart', () => {
+      // Pieces on the floor do not survive a reset: put them back on the rig before anything
+      // else touches it, or the next armour is built out of plates this still owns.
+      scatter.cancel();
       { const ring = ctx.world && ctx.world.ring; if (ring) ring.set(0); }
       if (ctx.suit) ctx.suit.parked = null;
       boyStepIn();
@@ -486,6 +544,16 @@ export default {
       // Where the pilot stands is decided before anything else in the frame, and in every
       // mode: on foot outside a parked shell he has to be ON the player, not in the suit.
       syncBoy();
+
+      /* The pieces on the ground, and the flight home. `_playerPos` is where the shins are,
+       * so walking into a plate shoves it. When the last one clamps on, the ordinary
+       * re-entry runs — one path back into an armour, however it got there. */
+      if (scatter.active) {
+        const st = playerStance(ctx);
+        scatter.update(dt, st ? st.pos : null);
+        if (!scatter.active) ctx.bus.emit('suit:reenter');
+      }
+
       if (doffing) {
         doffing.t += dt;
         const k = Math.min(1, doffing.t / doffing.dur);
@@ -495,6 +563,11 @@ export default {
             // Nano retreats to the reactor: the same edge that spread outwards, run back.
             suit.nano.setActive(true);
             suit.nano.setEdge(1.6 - k * 2.6);
+          } else if (doffing.apart) {
+            /* Nothing to animate here: the plates stay on until the moment they let go, and
+             * then scatter.js throws all of them at once. Hiding them head-downward first
+             * would be the armour vanishing and a pile appearing, which is not the same
+             * thing as it coming apart. */
           } else {
             // Plates release from the head down, so the face appears first.
             const order = Object.keys(suit.rig.plates || {});
@@ -537,8 +610,25 @@ export default {
               suit.root.rotation.set(0, ctx.flight.model.rotation
                 ? ctx.flight.model.rotation.y : suit.root.rotation.y, 0);
             }
+            /* AND HERE IT COMES APART.
+             *
+             * The shell has just been stood on its feet above — which is exactly what the
+             * scatter wants as a starting point, because every plate is thrown from where it
+             * actually is on the body. `parked` is still set, so the boy detaches and walks
+             * away as he does for any other armour; the difference is that there is no shell
+             * standing there to walk back into, only pieces on the floor. */
+            if (doffing.apart && suit.rig) {
+              _sp.setFromMatrixPosition(
+                (suit.rig.pivots.piv_chest || suit.rig.pivots.piv_hips || suit.root).matrixWorld);
+              const gy = (ctx.world && ctx.world.surfaceHeight)
+                ? ctx.world.surfaceHeight(suit.root.position.x, suit.root.position.z)
+                : 0;
+              scatter.begin(suit.rig, _sp, gy);
+              if (ctx.ui) ctx.ui.say('SUIT DOWN. HOLD X ANYWHERE TO CALL IT BACK.');
+            }
             suit.parked = {
               id: doffing.id,
+              apart: !!doffing.apart,
               name: SPEC_NAMES[doffing.id] || String(doffing.id).toUpperCase(),
               pos: suit.root.position.clone(),
             };
