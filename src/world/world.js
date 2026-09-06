@@ -216,6 +216,11 @@ export default {
 
     const world = {
       root, terrain, ocean, sky, malibu, town, fair, donut, materials: M, lod,
+      /* Everything that only exists ABOVE ground. Collected once so the underground cull
+       * in render() is a flat list walk and not a scene traversal every frame. */
+      outdoor: [terrain, ocean.mesh, sky.mesh, mountains, vegNear, vegClose, vegFar,
+                town.root, fair.root, donut.root].filter(Boolean),
+      basement: BASEMENT,
       // Where the armour tablet stands, so onfoot/ can offer it without a scene search.
       tabletAt: malibu ? malibu.tabletAt : null,
       vegetation: { close: vegClose, near: vegNear, far: vegFar },
@@ -444,6 +449,42 @@ export default {
    * up again. Their owners keep their own references and go on setting `intensity` on the
    * detached object, so nothing else has to know this is happening. The pooled point
    * lights above are excluded — they have their own manager. */
+  /* DO NOT DRAW THE WORLD FROM INSIDE A SEALED BASEMENT.
+   *
+   * Measured by hiding one subtree at a time while standing in the workshop (739 draw
+   * calls, 1 901 063 triangles):
+   *
+   *     without the terrain      1 083 763   -817 300 triangles
+   *     without the vegetation   1 283 247   -617 816 triangles
+   *     without the ocean        1 833 479    -67 584 triangles
+   *
+   * That is 1.5 million triangles — SEVENTY-SIX PER CENT of the frame — spent on a
+   * hillside, a sea and half a million shrubs that are on the far side of five metres of
+   * rock. The workshop is a windowless room; none of it can be seen from in there.
+   *
+   * The test is deliberately geometric rather than a lighting mix: `env.k` also reaches 1
+   * inside the launch tunnel, and the tunnel is the one place underground where you CAN
+   * see the sky. Inside the basement footprint (inset 2 m so the cull never happens while
+   * you are standing in a doorway) and below the slab is the room and nothing else — the
+   * tunnel leaves that box long before its mouth comes into view.
+   */
+  _cullUnderground(ctx) {
+    const w = ctx.world;
+    if (!w || !w.outdoor || !w.basement) return;
+    const b = w.basement, p = ctx.camera.position;
+    /* ...and NOT under the stairwell. The shaft is a 4.6 m hole straight up into the
+     * living room, and the living room is glass on three sides: stand at the foot of the
+     * stairs, look up, and you are looking at the Pacific through two openings. It is the
+     * one spot underground with a line of sight out, so it keeps the world. Ten metres of
+     * radius covers the shaft plus the arc of floor you can see the sky from. */
+    const dStair = Math.hypot(p.x - 15, p.z - 16);
+    const inside = p.y < 93.5 && dStair > 10 &&
+      p.x > b.x0 + 2 && p.x < b.x1 - 2 && p.z > b.z0 + 2 && p.z < b.z1 - 2;
+    if (inside === this._underground) return;          // only touch it on the transition
+    this._underground = inside;
+    for (const o of w.outdoor) if (o) o.visible = !inside;
+  },
+
   _reapDarkLights(ctx) {
     if (!ctx || !ctx.scene) return;
     const dark = this._dark || (this._dark = []);
@@ -477,6 +518,7 @@ export default {
     const cam = ctx.camera;
     if (this._lightPool === undefined) this._lightPool = this._buildLightPool(ctx, ctx.scene);
     this._updateLightPool(cam.position, ctx);
+    this._cullUnderground(ctx);
     w.sky.update(cam);
     if (ctx.env && w.sky.setMix) w.sky.setMix(ctx.env.k || 0);
     w.ocean.update(ctx.dt, cam, ctx.time);

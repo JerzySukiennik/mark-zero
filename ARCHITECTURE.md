@@ -640,3 +640,37 @@ geometry, so `mergeStatic` now measures the subtree before and after and returns
 
 Identical triangle counts and an unmoved world bounding box are what prove the transform
 baking is right. `?nomerge=1` turns the whole pass off, the way `?nodedupe=1` does.
+
+### The whole world was being drawn from inside a windowless basement
+
+Measured by hiding one subtree at a time while standing in the workshop, which cost 739
+draw calls and **1 901 063 triangles**:
+
+    without the terrain      1 083 763    -817 300 triangles
+    without the vegetation   1 283 247    -617 816 triangles
+    without the ocean        1 833 479     -67 584 triangles
+
+A million and a half triangles — **seventy-six per cent of the frame** — on a hillside, a
+sea and half a million shrubs sitting on the far side of five metres of rock. The workshop
+has no windows.
+
+`world.js` `_cullUnderground` hides the outdoor list when the camera is inside the basement
+footprint (inset 2 m, so it never fires while you stand in a doorway) and below the slab.
+
+Two things it is deliberately **not**:
+
+* **not keyed on `env.k`.** The lighting mix also reaches 1 inside the launch tunnel, and
+  the tunnel is the one place underground where you are *supposed* to see the sky. A
+  geometric test leaves that box long before the mouth comes into view.
+* **not applied under the stairwell.** The shaft is a 4.6 m hole straight up into a living
+  room that is glass on three sides: stand at the foot of the stairs, look up, and you are
+  looking at the Pacific through two openings. Ten metres of radius around the shaft keeps
+  the world, and the measurement confirms it — the stairs still draw the full 1.9 M.
+
+| where | triangles before | after |
+|---|---|---|
+| workshop | 1 901 063 | **545 551** |
+| armour bay | — | 377 390 |
+| stairwell | 1 901 013 | 1 901 013 (deliberately unchanged) |
+| living room | 1 524 419 | 1 524 419 |
+| in flight | 1 508 518 | 1 508 518 |
