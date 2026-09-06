@@ -40,6 +40,13 @@ export class Loop {
       this._fpsN++; this._fpsT += delta;
       if (this._fpsT > 0.5) { this.fps = this._fpsN / this._fpsT; this._fpsN = 0; this._fpsT = 0; }
 
+      if (this.ctx.menu && this.ctx.menu.open) {
+        // The front screen flies its own suit; the simulation is not running behind it.
+        if (this.ctx.input) this.ctx.input.beginStep();
+        this.ctx.menu.update(delta);
+        this.render();
+        return;
+      }
       if (this.ctx.state.paused) {
         // Paused still consumes input edges, or the Esc that unpauses would be eaten.
         if (this.ctx.input) this.ctx.input.beginStep();

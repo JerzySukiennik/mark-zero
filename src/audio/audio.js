@@ -176,6 +176,11 @@ export default {
     // 60 Hz is already finer than the head can hear moving.
     self.listenerClock = (self.listenerClock || 0) + dt;
     if (ctx.camera && self.listenerClock >= 1 / 60) { self.listenerClock = 0; mixer.setListener(ctx.camera); }
+    // Which armour is on is the game's business, not a thing audio remembers separately:
+    // it used to be set only by `suitup:start`, so anything that put a suit on without the
+    // ritual (the debug wear, a re-entry through F) left audio believing the player was
+    // unarmoured — and the armoured footsteps are gated on exactly that.
+    self.armor = ctx.state.armor || null;
     cueMusic(self, ctx);
     sonicBoom(self, ctx, dt);
   },
@@ -506,7 +511,10 @@ function wire(ctx, self) {
   // ---- flight ------------------------------------------------------------------------
   bus.on('impact', (p) => {
     const f = typeof p === 'number' ? p : (p && p.force) || 0;
-    if (f < 40) return;
+    /* 12, not 40. Nothing in the game emits 40. flight/ raises 'impact' for a landing with
+     * `8 + landHard * 22`, so the loudest arrival the game can produce is 30 and every
+     * single landing was silent — a threshold set for a scale nothing ever reached. */
+    if (f < 12) return;
     impact(self, f, { material: (p && p.material) || 'ground', gain: 1.1 });
     if (f > 900) mixer.play('hud_warn', { bus: 'ui', gain: 0.5, delay: 0.08 });
   });

@@ -330,6 +330,19 @@ export default {
 
   update(dt, ctx) {
     const api = ctx.suit;
+    /* THE STATE FOLLOWS THE RIG, every frame, and cannot drift from it.
+     * `ctx.state.armor` used to be written at several moments by several owners and it
+     * kept disagreeing with what was actually worn — measured twice: state said 'mk50'
+     * while suit.rig.id was 'mk3'. That is not cosmetic, because flight/ looks up thrust,
+     * mass and top speed in ARMOR_SPECS by that id. Whatever is on the body is the truth;
+     * everything else is a claim about it.
+     *
+     * It only ever writes a REAL id, and never during a suit-up or a doff. Nulling it here
+     * was wrong twice over: onfoot sets `state.armor` the moment you step onto the ring —
+     * before the eight megabytes have loaded and before there is any `api.id` — and this
+     * line wiped that choice out from under the sequence that was about to act on it. */
+    const busy = ctx.suitup && (ctx.suitup.playing || ctx.suitup.doffing);
+    if (api && api.id && !busy && ctx.state.armor !== api.id) ctx.state.armor = api.id;
     if (api && api.rig) api.rig.updateGlow(ctx.time || 0);
     if (!api || !api.rig) return;
     api.rig.updatePose(dt);

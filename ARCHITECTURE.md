@@ -912,3 +912,82 @@ so a Mk III would have been flying on the Mk L's numbers. suit/ is the only writ
 `equip()` also writes it on the already-worn early return so it can never go stale.
 `equip()` additionally carries a request token: two overlapping loads (pick a Mark, change
 your mind) no longer let whichever finishes second install itself.
+
+# ═══ THE PROTO STAGE (2026-09-06) ═══
+
+The Malibu house, the town, the fairground, the donut lot, the cliff, the ocean and the
+vegetation are **gone**. Jurek's call, and the right one: they were the reason the game ran
+badly and none of them were the point. The point is the suit — choosing it, putting it on,
+and flying it. Everything about the armour is kept and is what gets worked on now.
+
+The old world is `src/world/world-malibu.js.bak`. It is not dead code awaiting a tidy-up; it
+is where the terrain, the house and the destructible town come back from when there is
+something worth putting them around.
+
+## What the stage is now
+
+* a 600 m base plate carrying Kenney's prototype grid (CC0, `textures/kenney/`) — a
+  placeholder that looks like a placeholder, and a grid gives the eye something to measure
+  speed against, which a flat colour does not;
+* 46 square low-poly blocks, seeded so the stage is identical every run and a measurement
+  means something, there to give flight somewhere to fly and the eye something to judge
+  height and speed by;
+* the suit-up ring, and the tablet that arms it.
+
+Scene meshes went from **6701 to 292**.
+
+## The ring (`src/world/ring.js`)
+
+Jurek's beat, in his words: *you step onto the circle when YOU want to; the rings lift and
+lean inward; from the hole they leave, arms come up and put the armour on you.*
+
+So the ring is not scenery with a trigger on it — it is the machine, and everything hangs
+off one number, `t`, running 0 (a flush disc you can walk over) to 1 (deployed). `suitup/`
+drives it; nothing in `ring.js` decides when to open. Four concentric extruded annuli lift
+on a stagger and lean in, the middle deck drops away to become the hole, and four
+two-segment arms rise out of the shaft and reach toward whoever is standing there.
+
+**The tablet only chooses.** It used to walk you to the pad itself, which is the game
+deciding when you are ready. Picking a Mark now arms the ring and says so, and nothing
+happens until your own feet take you onto it.
+
+## The menu (`src/engine/menu.js`)
+
+The LAYOUT is from Hollowtree, which is what was asked for — not the look. A left column
+with the title and a vertical list (Single player / Multiplayer / Settings / Credits), the
+live scene filling the rest, and a veil opaque behind the text and clear on the right.
+
+The right-hand film is **not a video**: an armour is worn, a scripted path flies it in a
+long banking circle, and a camera rides its shoulder. A rendered clip would go out of date
+every time the suit changed; this cannot, and it doubles as a permanent smoke test — if the
+menu looks wrong, flight is wrong. Measured: the armour lands at 64% across and 75% down,
+which is the right-hand third, with the text clear of it.
+
+Two things had to be learned to make it work. `ctx.camOverride` is only a FLAG — it tells
+`flight/cameraRig` to keep its hands off and nothing applies it, so the first version framed
+an empty stage. And the loop does not step the simulation behind the menu, so `flight/`
+never places the armour where the model is: the menu positions the suit and runs its exhaust
+itself.
+
+## Known failing checks
+
+`tools/regression.html` is retargeted at this stage and stands at **37 passed, 3 failed, 0
+console errors**. The three are recorded here rather than quietly left:
+
+1. **the ring does not shut after a suit-up** (`open = 0.99`). The sequence appears never to
+   report finished, so `suitup/`'s `ring.set(0)` is never reached. The gantry the old
+   sequences drove no longer exists and is the first place to look.
+2. **S takes 12 s to stop the suit** from a clean 9-second run, against 4.5 s measured on
+   the old stage. Not yet explained; may be reactor power after a long burn, may be real.
+3. **impacts still inaudible** even after the threshold fix below.
+
+While chasing (3) a real gap turned up and is fixed: the audio `impact` handler required a
+force of **40**, and nothing in the game emits 40 — `flight/` raises a landing impact as
+`8 + landHard * 22`, so the loudest arrival possible is 30 and **every landing was silent**.
+The threshold is 12 now.
+
+Two more of the same family, both fixed: `ctx.state.armor` now follows the worn rig every
+frame (it had drifted to naming a different Mark than the one on the body, and `flight/`
+reads thrust and mass from `ARMOR_SPECS` by that id), and `audio/` reads the armour from the
+game state rather than remembering its own, so a suit put on without the ritual no longer
+leaves the footsteps silent.

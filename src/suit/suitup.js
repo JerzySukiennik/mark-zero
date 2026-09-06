@@ -70,6 +70,9 @@ export default {
       async begin(id) {
         const seq = SEQUENCES[id];
         if (!seq) { console.warn('[suitup] no sequence for', id); return null; }
+        // The ring is the machine now: it opens for the whole sequence and shuts after.
+        const ring = ctx.world && ctx.world.ring;
+        if (ring) ring.set(1);
         if (active) self.cancel();
 
         // Nobody else may drive the armour while the ritual is running. flight/ takes
@@ -275,6 +278,7 @@ export default {
     });
 
     ctx.bus.on('restart', () => {
+      { const ring = ctx.world && ctx.world.ring; if (ring) ring.set(0); }
       if (ctx.suit) ctx.suit.parked = null;
       self.cancel();
       stow = 0; hold = 0;
@@ -382,6 +386,7 @@ export default {
           hold = 2.4;                    // he stands in the light for a beat
           ctx.suit.showBody(false);      // he is inside it now
           ctx.suit.setPose('stand');
+          { const ring = ctx.world && ctx.world.ring; if (ring) ring.set(0); }
           ctx.bus.emit('suitup:done', self.id);
           if (resolve) resolve(self.id);
         }

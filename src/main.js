@@ -18,6 +18,7 @@
 //     without that module.
 
 import { dedupeMaterials, mergeStatic, trimShadowCasters } from './engine/dedupe.js';
+import { installMenu } from './engine/menu.js';
 import * as THREE from 'three';
 import { createRenderer } from './engine/renderer.js';
 import { buildEnvironment } from './engine/env.js';
@@ -293,10 +294,22 @@ async function main() {
   const loop = new Loop(ctx, MODULES);
   const MZ = installDebug(ctx, loop);
 
+  /* The front screen goes up before anything else takes the pointer. Single player hands
+   * control to installShell's normal flow; everything else stays on the menu. */
+  const menu = installMenu(ctx, {
+    onStart() {
+      ctx.bus.emit('restart');
+      ctx.state.view = 'first';
+      if (ctx.input && ctx.input.requestLock) ctx.input.requestLock();
+      ui.clickHint(true);
+    },
+  });
+
   installShell(ctx, loop, ui);
 
   loop.render();
   setTimeout(bootDone, 260);
+  menu.show();
   loop.start();
 
   // One honest line in the console for whoever is driving this from a script.
@@ -385,6 +398,7 @@ function installShell(ctx, loop, ui) {
     }
     if (e.code === 'Escape') {
       e.preventDefault();
+      if (ctx.menu && ctx.menu.open) return;           // already home
       if (ui.legendOpen) { ui.showLegend(false); if (!ctx.state.paused) input.requestLock(); return; }
       setPaused(!ctx.state.paused);
     } else if (e.code === 'Slash' || e.code === 'F1') {
@@ -434,7 +448,8 @@ function installShell(ctx, loop, ui) {
 
   // The first load gets a title card over the real living room, not a control panel
   // over a black screen. It leaves the moment he clicks into the game.
-  ui.showTitle(true);
+  // The menu is the title card now.
+  ui.showTitle(false);
   ui.clickHint(false);
 }
 

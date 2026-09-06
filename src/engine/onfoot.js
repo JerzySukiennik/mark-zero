@@ -635,16 +635,14 @@ export default {
                   id: a.id, name: a.name, sub: a.sub,
                   tint: ('000000' + a.tint.toString(16)).slice(-6),
                 })), (id) => {
-                  const c2 = cases.find(c => c.id === id);
                   if (ctx.input && ctx.input.requestLock) ctx.input.requestLock();
-                  if (!c2) return;
-                  chosen = c2;
-                  st.armor = id;
-                  if (c2.gantry) {
-                    approach = 0; approachStall = 0; approachSide = 0; approachIdx = 0;
-                    approachPath = planApproach(P.pos, c2.gantry);
-                    ctx.ui.say('STEP ONTO THE PLATFORM, SIR.');
-                  } else startSuitup(c2);
+                  /* THE TABLET ONLY CHOOSES. It used to walk you to the pad itself, which
+                   * is the game deciding when you are ready. Jurek's rule for the new ring
+                   * is "you step on when YOU want to", so picking here arms the ring and
+                   * nothing else happens until you walk onto it. */
+                  api.pending = id;
+                  if (ctx.ui) ctx.ui.say((ARMORS.find(a => a.id === id) || {}).name +
+                                         ' READY. STEP ONTO THE RING.');
                 });
               }
               return;
@@ -656,6 +654,22 @@ export default {
           }
           return;
         }
+      }
+
+      /* ------------- the ring -------------------------------------------
+       * Armed by the tablet, fired by your own feet. Nothing here decides when. */
+      const wring = ctx.world && ctx.world.ring;
+      if (api.pending && wring && wring.contains(P.pos.x, P.pos.z) && !chosen) {
+        const id = api.pending;
+        api.pending = null;
+        st.armor = id;
+        chosen = { id };
+        startSuitup({ id });
+        return;
+      }
+      if (ctx.ui && api.pending && wring && !chosen) {
+        const d = Math.hypot(P.pos.x - 0, P.pos.z - 0);
+        if (d < 14) ctx.ui.prompt({ name: 'THE RING', sub: 'STEP ON TO SUIT UP', key: '', progress: 0 });
       }
 
       // ------------- step back into a parked suit ---------------------------
