@@ -117,6 +117,12 @@ export default {
       mute: (v) => mixer.setMuted(v == null ? !mixer.muted : v),
       volume: (v) => (v == null ? mixer.volume : mixer.setVolume(v)),
       report: () => ({ bank: bank.report(), mix: mixer.report(), unlocked: self.unlocked }),
+      /* A headless browser never produces the gesture that unlocks WebAudio, so every
+       * verification rig sees `update()` bail on the first line and can prove nothing
+       * about the mix. This lets one say "assume the gesture happened"; the AudioContext
+       * stays suspended, so nothing is actually audible and no autoplay policy is dodged
+       * — the point is only to let the scheduling logic run so it can be measured. */
+      forceUnlockedForTests: (v = true) => { self.unlocked = !!v; },
     };
     ctx.audio = api;
 
@@ -171,8 +177,48 @@ export default {
     self.listenerClock = (self.listenerClock || 0) + dt;
     if (ctx.camera && self.listenerClock >= 1 / 60) { self.listenerClock = 0; mixer.setListener(ctx.camera); }
     cueMusic(self, ctx);
+    sonicBoom(self, ctx, dt);
   },
 };
+
+/* THE BANG WHEN YOU LIGHT THE BOOST.
+ *
+ * Jurek asked for a sonic boom. There is no usable one to download: Wikimedia Commons has
+ * exactly one F-18 boom recording and it is clipped (peak 1.50) and flat from the first
+ * sample to the last — attack ratio 1.1x, no transient at all, which is a wall of
+ * distorted roar and not a bang. Its only thunder-clap alternative is CC BY-SA, which
+ * audio/CREDITS.md rules out on purpose. Auditioning and rejecting is the house rule here
+ * and both were rejected the same way the flat "crash hit" was in the first pass.
+ *
+ * So this is built out of recordings ALREADY in the bank and already credited, layered the
+ * way a real boom is shaped: a hard transient for the crack, pitched well down so it reads
+ * as pressure rather than as an impact, and the deep engine rumble underneath for the tail
+ * that rolls away after it. Real files, mixed — the same thing tools/fetch-audio.sh does
+ * when it cuts and layers, and nothing synthesised.
+ *
+ * Fired on the RISING EDGE of boost and rate-limited, because holding Shift is a
+ * continuous state and a bang every frame is a machine gun.
+ */
+function sonicBoom(self, ctx, dt) {
+  const on = !!(ctx.state && ctx.state.mode === 'flight' && ctx.flight &&
+                ctx.flight.model && ctx.flight.model.boostActive);
+  self.boomCool = Math.max(0, (self.boomCool || 0) - dt);
+  if (on && !self.boomWas && self.boomCool <= 0) {
+    const { mixer } = self;
+    const fast = Math.min(1, (ctx.state.speed || 0) / 260);
+    const g = 0.55 + 0.45 * fast;
+    // The crack: a heavy impact dropped two octaves. Low enough that the ear reads a
+    // pressure front rather than something being hit.
+    mixer.play('concrete_a', { gain: 0.95 * g, rate: 0.26 });
+    mixer.play('metal_heavy', { gain: 0.40 * g, rate: 0.30, delay: 0.012 });
+    // The tail: the same deep rumble the thruster sub layer is cut from, rolling away.
+    mixer.play('thruster_sub', { gain: 0.55 * g, rate: 0.62, delay: 0.03 });
+    // Everything else ducks out of the way of it, hard and briefly.
+    mixer.duck(0.35, 0.05, 0.55);
+    self.boomCool = 2.5;
+  }
+  self.boomWas = on;
+}
 
 // ------------------------------------------------------------------------------------
 

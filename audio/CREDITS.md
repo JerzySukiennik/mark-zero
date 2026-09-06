@@ -129,3 +129,32 @@ No CC-BY-NC, no CC-BY-SA, no "free for personal use", no rips from films or game
 
 Gravity Sound publish their library at <https://www.gravitysound.studio/>; the copies
 used here are the ones mirrored on Wikimedia Commons, linked per file above.
+
+## The sonic boom, and why it is a mix and not a download (2026-09-06)
+
+Asked for, and there is nothing clean to fetch. Both candidates were auditioned the way
+everything else here was, and both were rejected:
+
+* **`Sonic-boom-massive-sound.ogg`** (Wikimedia Commons, CC BY 3.0, an F-18 at an air show)
+  — *clipped and flat*. Measured: peak sample 1.50, and the envelope is at full level from
+  the first block to 4.2 s with an attack ratio of **1.1x**. A boom is a transient; this
+  file has none. It is a wall of distorted roar with the bang already inside the clipping.
+* **`Thunder Claps.ogg`** — the only other transient of the right shape on Commons, and it
+  is **CC BY-SA 4.0**, which this bank does not accept (see the licence rule above).
+
+So the boom is layered at play time from recordings already in this bank and already
+credited here, shaped the way a real one is: a hard transient for the crack, pitched down
+two octaves so it reads as a pressure front rather than as something being hit, and the
+deep engine rumble underneath for the tail that rolls away after it.
+
+    crack  concrete_a    rate 0.26   (rubberduck, CC0)
+    body   metal_heavy   rate 0.30   (rubberduck, CC0)
+    tail   thruster_sub  rate 0.62   (qubodup, CC0)
+
+Cutting and layering real recordings is what `tools/fetch-audio.sh` already does to every
+file in the bank; nothing here is synthesised. Fired on the rising edge of boost and rate
+limited to one every 2.5 s — verified in `tools/opt-check.html`: one on the first press,
+still one while the key is held, two after a second press.
+
+**No rips from films, games or video sites.** That rule is older than this section and it
+is why the bank is redistributable at all.

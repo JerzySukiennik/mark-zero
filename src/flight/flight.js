@@ -242,6 +242,17 @@ export class FlightModel {
     this.hover = false; this.hoverHold = false; this.hoverArmed = false;
     this.hoverAnchor.copy(position);
     this.impact = 0;
+    /* BACK IN THE AIR, NOT STILL WALKING.
+     * Ground mode is a whole separate integrator, and reset() did not clear it — so
+     * anything that put you into the air from a standing start (activate(), a suit-up
+     * finishing on the pad, a restart) left `locomotion` on 'walk' and you were walked
+     * through the sky at 2.2 m/s with the mains ignored. Measured: after a suit-up, 4 s
+     * of held W produced a speed of exactly 0 and boost did nothing at all. */
+    this.locomotion = 'fly';
+    this.walkPhase = 0; this.walkSpeed = 0; this.lookPitch = 0;
+    this.landHard = 0; this.landT = 0; this.liftoffT = 0; this.boostT = 0;
+    this.yaw = yaw;
+    this._prevPos = null;
   }
 
   // Fraction of rated thrust actually available right now.
