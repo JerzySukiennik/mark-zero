@@ -17,7 +17,7 @@
 //     and time-limited; a failure writes a visible on-screen error and the game boots
 //     without that module.
 
-import { dedupeMaterials } from './engine/dedupe.js';
+import { dedupeMaterials, mergeStatic } from './engine/dedupe.js';
 import * as THREE from 'three';
 import { createRenderer } from './engine/renderer.js';
 import { buildEnvironment } from './engine/env.js';
@@ -198,7 +198,43 @@ async function main() {
     const d = dedupeMaterials(ctx.world && ctx.world.root ? ctx.world.root : ctx.scene);
     console.log('[MARK ZERO] materials ' + d.before + ' -> ' + d.after +
                 ' (' + d.disposed + ' copies freed across ' + d.meshes + ' meshes)');
-  } catch (e) { console.warn('[dedupe] skipped', e); }
+    ctx.bakeReport = Object.assign(ctx.bakeReport || {}, { dedupe: 'ran' });
+  } catch (e) { ctx.bakeReport = Object.assign(ctx.bakeReport || {}, { dedupe: 'ERR ' + e.message }); console.warn('[dedupe] skipped', e); }
+
+  /* Bake the workshop's clutter into batches.
+   *
+   * Measured with the real renderer before this ran: the workshop cost 1443 draw calls a
+   * frame against 145 in the living room and 68 in the air over the town, from 1158 meshes
+   * carrying 33 154 triangles between them — TWENTY-NINE triangles each. It is a thousand
+   * little boxes, and every one is submitted twice: once for the colour pass and once into
+   * the shadow map. That is the spike on walking down the stairs, and it is a draw-call
+   * problem, not a triangle problem.
+   *
+   * Only the workshop, because that is where the problem is, and every subtree merged is a
+   * subtree that stops culling per object. After the material dedup, so a batch keys on the
+   * shared material. See engine/dedupe.js for what is excluded and why. */
+  try {
+    const mal = ctx.world && ctx.world.malibu;
+    if (!mal) {
+      ctx.bakeReport = Object.assign(ctx.bakeReport || {}, { merge: 'no malibu' });
+    } else {
+      const rep = {};
+      // 3, not 6: at six the workshop still left 120 mergeable meshes sitting in groups
+      // too small to qualify, which is 120 draw calls for nothing.
+      const off = new URLSearchParams(location.search).has('nomerge');
+      for (const [name, grp] of [['shop', mal.shop], ['interior', mal.interior]]) {
+        if (!grp || off) continue;
+        rep[name] = mergeStatic(grp, 3);
+        console.log('[MARK ZERO] ' + name + ' meshes ' + rep[name].before + ' -> ' +
+                    rep[name].left + ' (' + rep[name].merged + ' baked into ' +
+                    rep[name].batches + ' batches)');
+      }
+      ctx.bakeReport = Object.assign(ctx.bakeReport || {}, { merge: rep });
+    }
+  } catch (e) {
+    ctx.bakeReport = Object.assign(ctx.bakeReport || {}, { merge: 'ERR ' + e.message });
+    console.warn('[mergeStatic] skipped', e);
+  }
 
   progress(1, 'ready');
   ctx.state.ready = true;

@@ -602,3 +602,41 @@ never drift apart.
 
 Verified in `tools/tablet-probe.html`: mesh built, `world.tabletAt` exposed, holding F opens
 the picker with 5 rows, and picking #5 sets `state.armor = mk50` and closes it.
+
+### The workshop was a draw-call problem, not a triangle problem
+
+Measured with the real renderer in headless Chrome (`tools/shadow-probe.html`,
+`tools/merge-ab.html`), because `renderer.info` in the session's browser pane reported
+`calls=1`:
+
+| where | before | after |
+|---|---|---|
+| living room | 145 | 128 |
+| **workshop** | **1373** | **822** |
+| **stairwell** | **1795** | **878** |
+| air over the town | 68 | 68 |
+
+The workshop held **1158 meshes carrying 33 154 triangles** — an average of twenty-nine
+triangles each. Bench legs, brackets, crates, tool handles: none of it expensive to draw,
+all of it expensive to *submit*, and every one submitted a second time into the shadow map.
+That is the spike on walking down the stairs, and no amount of polygon reduction touches it.
+
+`mergeStatic` in `engine/dedupe.js` bakes them into one mesh per material. 1000 of the
+workshop's meshes became 40 batches and 320 of the interior's became 14. What makes it safe
+is that almost nothing down there is referenced: exactly one mesh in the workshop had a
+name. Excluded, each for its own reason: named meshes, `userData.worldSolid` (Handoff holds
+them and builds colliders from them), `userData.breakable`, anything under an animated group,
+and **anything transparent** — transparent objects are sorted per object, and a dozen of them
+in one buffer draw in whatever order their triangles happen to sit.
+
+**Verified on geometry, not on pixels.** A pixel A/B of this is worthless: the scene animates
+— glowing screens, the reactor's breath, the practicals, the water — so two separate runs
+differ on about 1% of pixels with peak channel deltas over 200 whether or not anything was
+merged. An afternoon went into reading meaning into that noise. What is deterministic is the
+geometry, so `mergeStatic` now measures the subtree before and after and returns both:
+
+    shop      1158 -> 198 meshes, 1000 baked into 40 batches, tris 33094 -> 33094, box shift 0.0000 m
+    interior   360 ->  54 meshes,  320 baked into 14 batches, tris  5481 ->  5481, box shift 0.0000 m
+
+Identical triangle counts and an unmoved world bounding box are what prove the transform
+baking is right. `?nomerge=1` turns the whole pass off, the way `?nodedupe=1` does.
