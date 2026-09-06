@@ -138,8 +138,33 @@ export class Input {
   }
   releaseAll() { this.virtual.clear(); this.clear(); }
   tapped(code) { return this.pressed.has(code); }
-  action(name) { const b = BINDINGS[name]; return !!b && b.some(c => this.down(c)); }
-  actionTapped(name) { const b = BINDINGS[name]; return !!b && b.some(c => this.pressed.has(c)); }
+  /* ACCEPTS AN ACTION NAME *OR* A RAW KEY CODE, and this is not a convenience.
+   *
+   * `down()` takes key codes ('KeyW'), `action()` took binding names ('forward'), and
+   * `axis()` is built on `action()`. engine/onfoot.js passes names, so walking worked.
+   * flight/input.js passes CODES — `axis('KeyW','KeyS')` — and every one of those lookups
+   * missed the bindings table and returned false. Silently: no throw, no warning, just a
+   * zero.
+   *
+   * The consequence was that W, S, A and D did nothing at all in flight. Space and Shift
+   * kept working because they go through `down()` directly, which is why the suit still
+   * flew and the fault read as "braking is too slow" rather than as "there is no braking":
+   * S had never once been connected to anything. A whole session was spent tuning the
+   * retro-thrust authority behind a key that could not be pressed.
+   *
+   * Fixed here rather than in flight/input.js on purpose: any caller may reasonably use
+   * either, and a lookup that silently returns false for a valid key code is a trap that
+   * will be walked into again. */
+  action(name) {
+    const b = BINDINGS[name];
+    if (b) return b.some(c => this.down(c));
+    return this.down(name);           // not a bound action: treat it as a raw key code
+  }
+  actionTapped(name) {
+    const b = BINDINGS[name];
+    if (b) return b.some(c => this.pressed.has(c));
+    return this.pressed.has(name);    // raw key code, same rule as action()
+  }
   button(i) { return this.enabled && !!this.buttons[i]; }
   buttonTapped(i) { return this.buttonsPressed.has(i); }
 

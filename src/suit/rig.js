@@ -45,6 +45,20 @@ export const PIVOT_PARENT = {
   piv_reactor: 'piv_hips',
 };
 
+/* Root-to-joint parent chains, derived from PIVOT_PARENT once and memoised. `chainOf('piv_palmL')`
+ * is ['piv_chest','piv_shoulderL','piv_elbowL'] — outermost first, the order a transform has to
+ * be accumulated in. Static data: PIVOT_PARENT never changes at runtime. */
+const _CHAINS = new Map();
+function chainOf(name) {
+  let c = _CHAINS.get(name);
+  if (!c) {
+    c = [];
+    for (let n = PIVOT_PARENT[name]; n; n = PIVOT_PARENT[n]) c.unshift(n);
+    _CHAINS.set(name, c);
+  }
+  return c;
+}
+
 // Which pivot each plate belongs to, used when a model ships plates flat or when the
 // proxy figure is built. A loaded model's own parenting always wins.
 export const PLATE_PIVOT = {
@@ -237,6 +251,7 @@ export class SuitRig {
     this._restQ = {};              // pivot name -> rest quaternion
     this._childDir = {};           // pivot name -> unit dir to child, in pivot LOCAL space
     this._target = {};             // pivot name -> target quaternion
+    this._targetNames = null;      // its key list, lazily rebuilt; see _targetQ / updatePose
     this._poseName = 'stand';
     this._poseBlend = 8;           // rad/s-ish slerp rate
   }
@@ -493,6 +508,7 @@ export class SuitRig {
         this._childDir[name], THREE.MathUtils.degToRad(twistDeg)));
     }
     this._target[name] = q;
+    this._targetNames = null;         // see _targetQ: the name list is now stale
   }
 
   // Aim a pivot's own local -Y (the emitter axis of the contract: palms and boot jets)
@@ -504,6 +520,7 @@ export class SuitRig {
     const restAxis = _v.set(0, -1, 0).applyQuaternion(rest).normalize();
     const swing = new THREE.Quaternion().setFromUnitVectors(restAxis, _v2.copy(dir).normalize());
     this._target[name] = swing.multiply(rest);
+    this._targetNames = null;         // see _targetQ
   }
 
   // A pose entry is one of:
@@ -528,7 +545,7 @@ export class SuitRig {
       const spec = pose[p];
       const parentName = PIVOT_PARENT[p];
       const qParent = (parentName && chain[parentName]) ? chain[parentName] : new THREE.Quaternion();
-      if (!spec) this._target[p] = this._restQ[p].clone();
+      if (!spec) { this._target[p] = this._restQ[p].clone(); this._targetNames = null; }
       else if (spec.aimWorld) {
         // A LOCAL vector, not the module temporaries: aimEmitter clobbers _v and _v2 on
         // its first line, and handing it one of them as the direction hands it garbage.
@@ -573,26 +590,57 @@ export class SuitRig {
       this._baked[name] = this._target;
     }
     this._target = keep;
+    this._targetNames = null;           // the object was swapped out and back
     return this._baked;
   }
 
   /** @param w {Object} pose name -> weight. Normalised internally; small weights dropped. */
+
+  /* The one place a target quaternion is created, so the name list updatePose() walks can be
+   * kept in step without ever recomputing Object.keys(). Every writer goes through here. */
+  _targetQ(name) {
+    let q = this._target[name];
+    if (!q) {
+      q = this._target[name] = new THREE.Quaternion();
+      // If the list is stale (null) it gets rebuilt from scratch in updatePose, so only
+      // extend it when it is currently valid — pushing onto a list about to be discarded
+      // is harmless but pushing onto one that is missing other names is not.
+      if (this._targetNames) this._targetNames.push(name);
+    }
+    return q;
+  }
+
+  /* ALLOCATES NOTHING. This runs 120 times a second on every frame the suit is worn, and
+   * it used to build four fresh arrays each time: Object.keys(w), Object.keys(this.pivots)
+   * (about twenty strings), a `use` list, and a two-element tuple for every active pose.
+   * That is the steady drip of garbage behind the periodic hitch while flying — nothing is
+   * slow here, it is just that a megabyte a second of short-lived arrays has to be collected
+   * eventually, and the collection is what you feel.
+   *
+   * Same maths, same result, into buffers that are allocated once: two parallel arrays with
+   * a length counter instead of a list of pairs, and a cached pivot-name list (the pivots do
+   * not change after bake). Verified by counting heap growth per tick — see
+   * tools/gc-spike-probe.html and the note in ARCHITECTURE.md. */
   setPoseWeights(w) {
     const baked = this.bakePoses();
     let total = 0;
-    const use = [];
-    for (const name of Object.keys(w)) {
+    const useT = this._useT || (this._useT = []);
+    const useK = this._useK || (this._useK = []);
+    let nUse = 0;
+    for (const name in w) {
       const k = w[name];
-      if (k > 0.001 && baked[name]) { use.push([baked[name], k]); total += k; }
+      if (k > 0.001 && baked[name]) { useT[nUse] = baked[name]; useK[nUse] = k; nUse++; total += k; }
     }
-    if (!use.length) return;
-    for (const p of Object.keys(this.pivots)) {
+    if (!nUse) return;
+    const names = this._pivotNames || (this._pivotNames = Object.keys(this.pivots));
+    for (const p of names) {
       let acc = null;
       let done = 0;
-      for (const [table, k] of use) {
+      for (let u = 0; u < nUse; u++) {
+        const table = useT[u], k = useK[u];
         const q = table[p] || this._restQ[p];
         const wt = k / total;
-        if (!acc) { acc = (this._target[p] || (this._target[p] = new THREE.Quaternion())).copy(q); done = wt; }
+        if (!acc) { acc = this._targetQ(p).copy(q); done = wt; }
         else {
           done += wt;
           // Incremental nlerp: each new term gets its share of what is left.
@@ -628,8 +676,11 @@ export class SuitRig {
     if (!o) return 0;
     // Accumulate the parent chain's TARGET rotation, so this lands on the pose being built.
     _q.identity();
-    const stack = [];
-    for (let n = PIVOT_PARENT[name]; n; n = PIVOT_PARENT[n]) stack.unshift(n);
+    /* The parent chain is a property of PIVOT_PARENT, which is a module constant — it is the
+     * same list every frame for a given joint, so building it with unshift() four times per
+     * frame (once per emitter) was pure garbage, and unshift reallocates on every insert on
+     * top of that. Computed once per joint name, then read. */
+    const stack = chainOf(name);
     /* The parent chain has to include the OFFSETS, not just the blended targets.
      * updatePose() renders `target · offset` for every joint, so resolving an emitter
      * aim against the targets alone solves it in a frame the armour is not actually in —
@@ -659,21 +710,33 @@ export class SuitRig {
     }
     const restAxis = _v3.set(0, -1, 0).applyQuaternion(rest).normalize();
     const swing = _q2.setFromUnitVectors(restAxis, _v2);
-    (this._target[name] || (this._target[name] = new THREE.Quaternion())).copy(swing).multiply(rest);
+    this._targetQ(name).copy(swing).multiply(rest);
     return excess;
   }
 
   /** Lift or drop the whole skeleton relative to the root. Used by the landing crouch. */
   setRootOffset(y) { this._rootOffsetY = y || 0; }
 
+  /* Also allocation-free, for the same reason. `Object.entries(this._target)` built an outer
+   * array plus a two-element array for EVERY joint — about twenty-six throwaway arrays, 120
+   * times a second. The target set only grows when a joint is first written, so the key list
+   * is maintained there (see _targetQ) and simply walked here. */
   updatePose(dt) {
     const k = 1 - Math.exp(-this._poseBlend * dt);
     const off = this._offset;
-    for (const [p, q] of Object.entries(this._target)) {
-      const o = this.pivots[p];
-      if (!o) continue;
-      if (off && off[p]) o.quaternion.slerp(_q3.copy(q).multiply(off[p]), k);
-      else o.quaternion.slerp(q, k);
+    /* Rebuilt only when something wrote `_target` directly (setPose, aimEmitter, bakePoses
+     * swapping the whole object). In steady flight nothing does, so this costs one array
+     * for the life of the pose and nothing per frame. */
+    const names = this._targetNames || (this._targetNames = Object.keys(this._target));
+    if (names) {
+      for (let i = 0; i < names.length; i++) {
+        const p = names[i];
+        const q = this._target[p];
+        const o = this.pivots[p];
+        if (!o || !q) continue;
+        if (off && off[p]) o.quaternion.slerp(_q3.copy(q).multiply(off[p]), k);
+        else o.quaternion.slerp(q, k);
+      }
     }
     const hips = this.pivots.piv_hips;
     if (hips) {

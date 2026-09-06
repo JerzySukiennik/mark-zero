@@ -260,6 +260,7 @@ export default {
 
     // ---- interaction state --------------------------------------------------
     let hold = 0, holdTarget = null, chosen = null, approach = -1;
+    let doffGrace = 0;      // seconds before a just-doffed armour may be stepped back into
     // The scripted walk onto the gantry pad: the planned route, which waypoint he is
     // heading for, and how long he has been going nowhere. See the `scripted` block below.
     let approachPath = null, approachIdx = 0, approachStall = 0, approachSide = 0;
@@ -294,6 +295,11 @@ export default {
     // Coming back out of an armour. suitup/ runs the doff and hands the player back here;
     // without this the boy is standing in his living room with the controls dead.
     ctx.bus.on('suitup:doffed', () => {
+      /* A moment during which the armour you just stepped out of cannot be stepped back
+       * into. Belt and braces alongside the longer stride out: X is pressed with a hand that
+       * is often already resting on F, and re-donning on the same gesture that removed the
+       * suit makes the whole mechanism look broken. */
+      doffGrace = 1.0;
       api.active = true;
       chosen = null; hold = 0; holdTarget = null; approach = -1;
       sawSuitup = false; suitupWatch = -1;
@@ -310,7 +316,13 @@ export default {
         const m = ctx.flight.model;
         const yaw = (ctx.suit && ctx.suit.root) ? ctx.suit.root.rotation.y : 0;
         const fx = -Math.sin(yaw), fz = -Math.cos(yaw);      // the armour faces -Z locally
-        P.pos.set(m.position.x + fx * 1.25, m.position.y - 1.0, m.position.z + fz * 1.25);
+        /* FAR ENOUGH OUT TO ACTUALLY BE OUT.
+         *
+         * This was 1.25 m while the re-entry radius further down is 2.4 m, so the instant
+         * you took an armour off you were still standing "at" it: the step-back-in prompt
+         * was already up and an F held from anything else put the suit straight back on.
+         * Three metres clears it, so getting back in is a decision you walk into. */
+        P.pos.set(m.position.x + fx * 3.0, m.position.y - 1.0, m.position.z + fz * 3.0);
         P.vel.set(0, 0, 0);
         // Turn round and look at what you just climbed out of.
         P.yaw = P.yawSmooth = yaw + Math.PI;
@@ -387,6 +399,10 @@ export default {
        * the moment the view goes back inside his own head, or you would be looking at the
        * inside of your own skull. Never touched while a suit-up is running: suitup/ owns
        * which parts of him are visible for the length of that ritual. */
+      /* THE AVATAR. He is `models/pilot.glb`, already loaded and already standing exactly
+       * where the player is (suit/ keeps him at the stance so the armour can close around
+       * him) — he was simply never shown outside a suit-up. Third person on foot pointed a
+       * chase camera at nobody. */
       const wantBoy = onFoot && !st.armor && st.view === 'third';
       if (ctx.suit && ctx.suit.showBody && !(ctx.suitup && ctx.suitup.playing) &&
           !(ctx.suit.parked) && wantBoy !== api._boyShown) {
@@ -411,6 +427,7 @@ export default {
         P.yaw -= m.x * LOOK_SENS;
         P.pitch = clamp(P.pitch - m.y * LOOK_SENS, -PITCH_LIMIT, PITCH_LIMIT);
       }
+      if (doffGrace > 0) doffGrace -= dt;
       P.yawSmooth = damp(P.yawSmooth, P.yaw, LOOK_SMOOTH, dt);
       P.pitchSmooth = damp(P.pitchSmooth, P.pitch, LOOK_SMOOTH, dt);
 
@@ -683,7 +700,7 @@ export default {
       // the world swallowed the display cases' own prompt, so after stepping out of a Mk
       // III you could get back into that one and never pick a different armour — which is
       // the exact thing taking it off was for.
-      if (parkedNear && !chosen) {
+      if (parkedNear && !chosen && doffGrace <= 0) {
         const inRange = true;
         const holding = input && input.action('interact') && !st.paused;
         if (inRange && holding) {

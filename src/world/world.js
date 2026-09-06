@@ -24,6 +24,7 @@ import * as THREE from 'three';
 import { buildMaterials, LODManager, Handoff } from './props.js';
 import { buildSky } from './sky.js';
 import { buildRing, RING } from './ring.js';
+import { buildTargets } from './targets.js';
 
 /* The plate. Big enough that you can open the throttle and still see where you started,
  * small enough to draw in one go: at 600 m a side it is two triangles and one texture. */
@@ -98,6 +99,12 @@ export default {
     }
     root.add(blocks);
 
+    /* ── things in the sky ──
+     * Drones to shoot and gates to fly through. Without them the airspace over the plate is
+     * empty and there is no reason to be up there. See world/targets.js. */
+    const targets = buildTargets(ctx, handoff, { ground: GROUND, span: PLATE });
+    root.add(targets.root);
+
     /* ── the suit-up ring ──
      * The centrepiece, and the whole reason the map went away. Built in ring.js. */
     const ring = buildRing(ctx, M, handoff);
@@ -139,7 +146,7 @@ export default {
     };
 
     const world = {
-      root, sky, materials: M, lod, plate, blocks, ring,
+      root, sky, materials: M, lod, plate, blocks, ring, targets,
       // The old stage's names, kept so nothing that reads them has to special-case a
       // missing map. There is no house, no basement and no display rack any more.
       malibu: null, town: null, fair: null, donut: null,
@@ -174,6 +181,7 @@ export default {
     const w = ctx.world;
     if (!w) return;
     if (w.ring && w.ring.update) w.ring.update(dt, ctx);
+    if (w.targets && w.targets.update) w.targets.update(dt, ctx.time);
   },
 
   render(ctx) {

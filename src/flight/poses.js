@@ -254,8 +254,21 @@ export class Poses {
     // ---- layer 1: procedural joint offsets -------------------------------------------
     // What the pilot FEELS: acceleration in body axes with gravity added back, which is
     // the force his arms and legs are actually being pushed around by.
+    /* GRAVITY IS ONLY "FELT" WHEN SOMETHING IS HOLDING YOU UP AGAINST IT.
+     *
+     * `accel + G` is the thrust vector: what the pilot is being pushed around by, and the
+     * right thing to trail the limbs off IN FLIGHT. Standing on the floor it is wrong twice
+     * over — the ground normal has already cancelled gravity, so `accel` is near zero, and
+     * adding G back invents a full g out of nothing. That phantom g fed straight into the
+     * arm trail below and held both shoulders at about thirty degrees back for as long as
+     * the suit stood there. Jurek: "jak on stoi na ziemi, to ma rece do tylu, dziwnie tak,
+     * ze jakby mu sie zlamaly rece". Nothing was broken; the suit was permanently bracing
+     * against a force that was not there.
+     *
+     * On the ground, `accel` alone is the honest answer. */
     const a = this._a || (this._a = new Vec3());
-    a.copy(model.accel || ZERO3); a.y += G_;
+    a.copy(model.accel || ZERO3);
+    if (!model.grounded) a.y += G_;
     a.applyQuaternion(_iq.copy(model.quaternion).invert());
 
     const fast = clamp(model.speed / (model.spec.topSpeed * 0.55), 0, 1);
@@ -278,9 +291,15 @@ export class Poses {
       else rig.setJointOffset(name, _oq.setFromAxisAngle(ax, ang));
     };
 
-    // Arms trail the acceleration. Push forward and they sweep back; brake and they are
-    // thrown out in front of him. 0.012 rad per m/s^2, capped at 20 degrees.
-    const armTrail = clamp(-a.z * 0.012, -0.35, 0.35);
+    /* Arms trail the acceleration. Push forward and they sweep back; brake and they are
+     * thrown out in front of him. 0.012 rad per m/s^2, capped at 20 degrees.
+     *
+     * Faded out as the suit settles into a stand. Belt and braces with the gravity fix
+     * above: a man standing still has his arms at his sides whatever the accelerometer
+     * says, and any residue — a landing bounce, a collision impulse, a frame of contact
+     * jitter — must not leave him posing. */
+    const settled = clamp(1 - (b.stand + b.land), 0, 1);
+    const armTrail = clamp(-a.z * 0.012, -0.35, 0.35) * settled;
     // Sweep back along the flanks with speed. This is the `armSweep` that was computed
     // every frame since the file was written and read by nothing.
     const sweep = p.armSweep * 0.42;
@@ -373,7 +392,19 @@ export class Poses {
     eb.applyQuaternion(_bq);
     ep.applyQuaternion(_bq);
 
-    if (!cmd.fire) {
+    /* NOT WHILE HE IS JUST STANDING THERE.
+     *
+     * This block points the boot and palm repulsors along the airframe's thrust, and where
+     * the wrist cannot reach, it swings the SHOULDER back to make up the shortfall — twice.
+     * That is right in the air and absurd on the ground: a suit standing still was aiming
+     * its palm thrusters at nothing, and the two IK passes held both shoulders about thirty
+     * degrees behind him. Measured while stationary: a symmetric -0.258 offset on each
+     * shoulder, with the authored stand pose contributing nothing at all. Jurek saw it as
+     * arms bent backwards "as if they were broken".
+     *
+     * `settled` is 0 once the stand pose has taken over, so the aiming — and the shoulder
+     * correction that comes with it — fades out as he plants his feet. */
+    if (!cmd.fire && settled > 0.02) {
       rig.aimEmitterNow('piv_thrusterL', eb, 0.87);
       rig.aimEmitterNow('piv_thrusterR', eb, 0.87);
       // Two passes. The first says how far the wrist falls short, the shoulder takes most
@@ -382,16 +413,16 @@ export class Poses {
       // offsets too. One pass alone leaves the palm chasing an arm that moved after it.
       let exL = rig.aimEmitterNow('piv_palmL', ep, 0.95);
       let exR = rig.aimEmitterNow('piv_palmR', ep, 0.95);
-      if (exL > 0.01) off('piv_shoulderL', X_AX, -exL * 0.85);
-      if (exR > 0.01) off('piv_shoulderR', X_AX, -exR * 0.85);
+      if (exL > 0.01) off('piv_shoulderL', X_AX, -exL * 0.85 * settled);
+      if (exR > 0.01) off('piv_shoulderR', X_AX, -exR * 0.85 * settled);
       exL = rig.aimEmitterNow('piv_palmL', ep, 0.95);
       exR = rig.aimEmitterNow('piv_palmR', ep, 0.95);
       // Two-joint IK: if the wrist could not reach, give 40% of the shortfall to the
       // shoulder so the whole arm reaches instead of the hand snapping.
       // Whatever is still out of reach after the second pass goes to the shoulder as well:
       // the arm keeps swinging rather than the wrist snapping to its limit.
-      if (exL > 0.01) off('piv_shoulderL', X_AX, -exL * 0.6);
-      if (exR > 0.01) off('piv_shoulderR', X_AX, -exR * 0.6);
+      if (exL > 0.01) off('piv_shoulderL', X_AX, -exL * 0.6 * settled);
+      if (exR > 0.01) off('piv_shoulderR', X_AX, -exR * 0.6 * settled);
     }
 
     /* ---- the walk cycle -------------------------------------------------------------

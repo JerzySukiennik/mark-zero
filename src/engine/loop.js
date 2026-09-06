@@ -53,6 +53,12 @@ export class Loop {
         this.render();
         return;
       }
+      // Networking runs on wall-clock frames, not simulation ticks: it publishes at a rate
+      // in Hz and interpolates against Date.now(), so a frame is the right cadence for it.
+      if (this.ctx.net && this.ctx.net.connected) {
+        try { this.ctx.net.update(delta); }
+        catch (e) { console.error('[net.update]', e); }
+      }
       this.acc += delta;
       let n = 0;
       while (this.acc >= STEP && n < MAX_STEPS_PER_FRAME) { this.step(STEP); this.acc -= STEP; n++; }

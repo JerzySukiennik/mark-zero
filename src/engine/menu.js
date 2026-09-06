@@ -55,7 +55,7 @@ const CSS = `
 
 const ITEMS = [
   { id: 'single', label: 'Single player' },
-  { id: 'multi', label: 'Multiplayer', disabled: true, note: 'not built yet' },
+  { id: 'multi', label: 'Multiplayer' },
   { id: 'settings', label: 'Settings' },
   { id: 'credits', label: 'Credits' },
 ];
@@ -79,6 +79,18 @@ export function installMenu(ctx, { onStart }) {
       '<div class="row"><b>Master volume</b><span data-v="vol">—</span></div>' +
       '<div class="row"><b>Shadows</b><span data-v="sh">—</span></div>' +
       '<p style="margin-top:12px">Adjust with the keys shown in CONTROLS (?).</p>' +
+      '<button class="item back">Back</button></div>' +
+    '<div class="pane" data-pane="multi"><h3>MULTIPLAYER</h3>' +
+      '<p>Everyone in the same sky. Fly together, shoot each other.</p>' +
+      '<div class="row"><b>Callsign</b><input class="mzin" data-v="name" maxlength="12"></div>' +
+      '<div class="row"><b>Room code</b><input class="mzin" data-v="code" maxlength="8" placeholder="ABC123"></div>' +
+      '<button class="item" data-act="host">Start a new room</button>' +
+      '<button class="item" data-act="join">Join that room</button>' +
+      '<p data-v="netmsg" style="min-height:1.4em"></p>' +
+      '<p style="opacity:.7">Right now a room is shared between TABS ON THIS MACHINE — open a ' +
+        'second tab, enter the same code, and there are two of you. Playing with someone ' +
+        'elsewhere needs the database rules deployed; that touches every other Gzowo game, ' +
+        'so it waits for Jurek to say go.</p>' +
       '<button class="item back">Back</button></div>' +
     '<div class="pane" data-pane="credits"><h3>CREDITS</h3>' +
       '<p>Built by Jurek with Claude.</p>' +
@@ -110,6 +122,13 @@ export function installMenu(ctx, { onStart }) {
   }
   function pick(id) {
     if (id === 'single') { api.hide(); onStart(); return; }
+    if (id === 'multi') {
+      const q = sel => el.querySelector('[data-v="' + sel + '"]');
+      if (ctx.net) q('name').value = ctx.net.name;
+      q('code').value = (ctx.net && ctx.net.code) || '';
+      q('netmsg').textContent = ctx.net && ctx.net.connected
+        ? ('In room ' + ctx.net.code + ' — ' + ctx.net.count + ' in the sky.') : '';
+    }
     if (panes[id]) {
       if (id === 'settings') {
         const q = s => el.querySelector('[data-v="' + s + '"]');
@@ -121,6 +140,24 @@ export function installMenu(ctx, { onStart }) {
     }
   }
 
+  /* Multiplayer buttons. Joining does NOT start the game by itself — you pick a room and
+   * then Single player as usual, so a room can be set up before anyone takes off. */
+  for (const b of el.querySelectorAll('[data-act]')) {
+    b.addEventListener('click', () => {
+      const q = sel => el.querySelector('[data-v="' + sel + '"]');
+      const msg = q('netmsg');
+      if (!ctx.net) { msg.textContent = 'Networking failed to start.'; return; }
+      ctx.net.name = q('name').value;
+      const act = b.dataset.act;
+      const code = act === 'host' ? ctx.net.newCode() : q('code').value.toUpperCase().trim();
+      if (act === 'join' && code.length < 4) { msg.textContent = 'That code is too short.'; return; }
+      const got = ctx.net.join(code);
+      if (!got) { msg.textContent = 'Could not join that room.'; return; }
+      q('code').value = got;
+      msg.textContent = 'Room ' + got + ' — give that code to whoever is joining, then press Single player.';
+    });
+  }
+
   /* ── the attract flight ──────────────────────────────────────────────────────────
    * A real suit on a real autopilot, filmed by a camera that leads it. Kept slow: this
    * is a poster, not gameplay, and a poster that whips past is unreadable. */
@@ -130,10 +167,27 @@ export function installMenu(ctx, { onStart }) {
   const _x = new THREE.Vector3(1, 0, 0);
   const _o = new THREE.Vector3();
 
+  /* THE LATE ACTIVATE, and why this counter exists.
+   *
+   * Loading an armour takes a second or two, so this function is async and everything
+   * after the `await` runs whenever that finishes — which may be long after the player has
+   * already clicked Single player and the game has reset itself. When that happened, the
+   * tail of this function then called flight.activate() on the freshly reset game and
+   * dropped it back into flight mode with the poster's dummy parked 130 m over the stage.
+   * The screen stopped changing, and the only way out was Esc and a restart — exactly the
+   * freeze Jurek reported.
+   *
+   * So every begin takes a ticket. hide() burns the ticket, and any await that resolves
+   * after that walks away instead of touching a game it no longer owns. This is the rule
+   * for every await in this file: re-check the ticket on the far side of it. */
+  let attractGen = 0;
+
   async function beginAttract() {
+    const gen = ++attractGen;
     attract.on = true; attract.t = 0;
     try {
       if (ctx.suit && ctx.suit.wear) await ctx.suit.wear('mk3');
+      if (gen !== attractGen) return;                 // the player already started the game
       if (ctx.flight) {
         ctx.flight.activate({ position: new THREE.Vector3(R, H, 0), yaw: 0 });
         ctx.state.view = 'third';
@@ -209,7 +263,15 @@ export function installMenu(ctx, { onStart }) {
     hide() {
       el.classList.remove('on');
       attract.on = false;
+      attractGen++;                                   // burn the ticket: see beginAttract
       ctx.camOverride = null;
+      /* Put the poster's dummy away HERE, not in whatever runs next. The attract flies a
+       * real armour on the real flight model, so leaving the screen without standing that
+       * down leaves the game in flight mode wearing a suit the player never chose. */
+      if (ctx.flight && ctx.flight.deactivate) ctx.flight.deactivate();
+      if (ctx.suit && ctx.suit.root) ctx.suit.root.visible = false;
+      ctx.state.mode = 'onfoot';
+      ctx.state.armor = null;
     },
     update,
   };

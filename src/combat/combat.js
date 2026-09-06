@@ -12,6 +12,7 @@
 import * as THREE from 'three';
 import { VFX } from './vfx.js';
 import { ProjectileSystem } from './projectile.js';
+import { Unibeam, CHARGE } from './unibeam.js';
 
 const DOWN_LOCAL = new THREE.Vector3(0, -1, 0);   // CONTRACT: palm emitter axis
 const _fwd2 = new THREE.Vector3();
@@ -162,6 +163,15 @@ export default {
                               { power, hand, speed: bolts.speed + carry });
       cooldown = opts.ignoreCooldown ? cooldown : 0.16;
       ctx.state.power = Math.max(0, ctx.state.power - 0.004 * power);
+      /* RECOIL. "te strzaly powinny miec odrzut wplywajacy na lot, czyli strzelanie w dol
+       * popycha cie do gory." A repulsor is a thruster you point at something else, so it
+       * has to push back — firing downward should lift you, and a long burst forward should
+       * measurably slow you down. Scaled with power, so the charged shot below shoves hard
+       * and a tap is a nudge. */
+      if (ctx.flight && ctx.flight.model && ctx.flight.active) {
+        const kick = (opts.recoil ?? 1.6) * power;
+        ctx.flight.model.velocity.addScaledVector(dir, -kick);
+      }
       ctx.bus.emit('repulsor:fire', { hand, power, origin: em.pos.clone(), direction: dir.clone() });
       return bolt;
     }
@@ -170,12 +180,84 @@ export default {
       return fire(Object.assign({ target, ignoreState: true, ignoreCooldown: true }, opts));
     }
 
-    ctx.combat = {
-      fire, fireAt, vfx, bolts,
+    /* ── THE CHARGED SHOT ──────────────────────────────────────────────────────────────
+     * A quick click is an ordinary shot. Holding the trigger charges, and a full charge
+     * released fires every emitter at once into one converging beam. Mk L only — see
+     * combat/unibeam.js for the whole rule.
+     *
+     * The tap fires on the DOWN edge, not on release, because a trigger that waits to see
+     * whether you meant to hold feels broken at the only moment it matters. Charging then
+     * runs underneath the shot you already took. */
+    const beam = new Unibeam(ctx);
+    let held = false, chargeT = 0;
+
+    /** The emitters that feed the beam: reactor, both palms, both array tips. */
+    function beamOrigins() {
+      const out = [];
+      const grab = name => {
+        if (ctx.suit && typeof ctx.suit.emitter === 'function') {
+          const p = new THREE.Vector3(), d = new THREE.Vector3();
+          if (ctx.suit.emitter(name, p, d)) { out.push(p); return; }
+        }
+        out.push(null);
+      };
+      grab('piv_reactor'); grab('piv_palmL'); grab('piv_palmR');
+      // The arrays live on the thrust FX, because that is what grows them.
+      const wings = ctx.flight && ctx.flight.thrustFX && ctx.flight.thrustFX.wings;
+      if (wings && wings.length) {
+        for (const w of wings) { const p = new THREE.Vector3(); w.core.getWorldPosition(p); out.push(p); }
+      }
+      return out;
+    }
+
+    function fireCharged() {
+      const em = emitter('R');
+      const chest = beamOrigins()[0] || em.pos;
+      const target = aimPoint();
+      const dir = target.clone().sub(chest);
+      if (dir.lengthSq() < 1e-6) dir.copy(em.axis);
+      dir.normalize();
+      const mid = chest.clone().addScaledVector(dir, CHARGE.converge);
+      beam.play(beamOrigins(), mid, target);
+      // Damage rides the ordinary projectile chain, at weight. Started at the convergence
+      // point, so it cannot clip the suit's own shoulder on the way out.
+      bolts.fire(mid.clone().addScaledVector(dir, 0.4), dir,
+                 { power: CHARGE.power, hand: 'R', speed: CHARGE.speed });
+      if (ctx.flight && ctx.flight.model && ctx.flight.active) {
+        ctx.flight.model.velocity.addScaledVector(dir, -CHARGE.recoil);
+      }
+      ctx.state.power = Math.max(0, ctx.state.power - 0.22);
+      ctx.bus.emit('repulsor:charged', { origin: mid.clone(), direction: dir.clone() });
+    }
+
+    function stepCharge(dt) {
+      const down = !!(ctx.input && ctx.input.buttons && ctx.input.buttons[0]);
+      const armed = !!ctx.state.armor && Unibeam.allowed(ctx);
+      if (down && !held) {
+        held = true; chargeT = 0;
+        if (ctx.state.mode !== 'onfoot' || ctx.state.armor) fire();
+      } else if (down && held) {
+        if (armed) chargeT = Math.min(CHARGE.time, chargeT + dt);
+      } else if (!down && held) {
+        if (armed && chargeT >= CHARGE.time) fireCharged();
+        held = false; chargeT = 0;
+      }
+      // Published for the arrays (they grow with the charge, not with the trigger) and the
+      // HUD. Zero on every other armour, which is how the arrays stay off them.
+      api.charge = armed ? chargeT / CHARGE.time : 0;
+      api.charging = armed && down;
+      beam.update(dt);
+    }
+
+    const api = {
+      fire, fireAt, vfx, bolts, beam,
+      charge: 0, charging: false,
+      fireCharged, stepCharge,
       get projectiles() { return bolts.live; },
       get cooling() { return cooldown; },
       emitter, aimPoint,
     };
+    ctx.combat = api;
 
     // --- input -------------------------------------------------------------------------
     // flight/input.js may publish 'input:fire'. If it does, we listen and nothing else.
@@ -199,12 +281,10 @@ export default {
     });
 
     ctx.bus.on('input:fire', p => { busFireSeen = true; fire(p || {}); });
-    const el = ctx.renderer.domElement;
-    el.addEventListener('pointerdown', e => {
-      if (busFireSeen || e.button !== 0) return;
-      if (ctx.state.mode === 'onfoot' && !ctx.state.armor) return;
-      fire();
-    });
+    /* NO pointerdown LISTENER ANY MORE. The trigger is a state machine now (stepCharge,
+     * above): a click has to be told apart from a hold, and that cannot be done from an
+     * edge event alone. Firing on the down edge inside the update keeps a tap as
+     * responsive as it was while making the hold mean something. */
     ctx.bus.on('debug:fire', p => fire(Object.assign({ ignoreState: true }, p || {})));
 
     // --- self-test bed:  ?mzdemo=1  ------------------------------------------------------
@@ -280,5 +360,8 @@ export default {
     };
   },
 
-  update(dt, ctx) { if (this._tick) this._tick(dt); },
+  update(dt, ctx) {
+    if (this._tick) this._tick(dt);
+    if (ctx.combat && ctx.combat.stepCharge) ctx.combat.stepCharge(dt);
+  },
 };

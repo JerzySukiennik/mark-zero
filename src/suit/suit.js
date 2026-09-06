@@ -69,6 +69,15 @@ export default {
          * A request token settles it. Anything that returns to find the token moved on
          * throws its work away rather than installing it. */
         const token = (api._equipToken = (api._equipToken || 0) + 1);
+        /* A PARKED ARMOUR STOPS EXISTING WHEN A NEW ONE IS PUT ON.
+         *
+         * `parked` is the armour you climbed out of, standing where you left it, and
+         * onfoot/ offers to step back into it. But there is only ONE rig — unequip() below
+         * disposes it — so after choosing a different Mark the parked record pointed at a
+         * suit that had been destroyed, and the prompt to step back into it was still up.
+         * That is half of "cannot take the suit off to put a different one on": the flow
+         * appeared to work and then offered you a ghost. */
+        api.parked = null;
         api.unequip();
         const rig = await loadArmor(ctx, id);
         if (token !== api._equipToken) {
@@ -93,6 +102,7 @@ export default {
         api.faceplateCtl = new Faceplate(rig, api.nano);
 
         normaliseGlow(rig, id);
+
 
         const chest = rig.pivots.piv_reactor || rig.pivots.piv_chest;
         if (chest) {
@@ -126,6 +136,28 @@ export default {
          * The scene-wide compileAsync at boot (main.js) stays: that one is measured — the
          * first frame back in the living room after a workshop trip went 95 ms to 10.3 ms —
          * and it does not throw. Nothing here was ever measured to help.
+         */
+
+        /* NO ARMOUR WARM-UP HERE. TRIED TWICE, MEASURED, DID NOT HELP.
+         *
+         * Twelve GPU programs still link on the first frame of third-person flight — the
+         * armour's textured materials (map / normal / roughness / emissive), which never get
+         * drawn on foot in first person and so compile the moment the suit first appears.
+         * Warming them by rendering the rig once through the game's own render path was
+         * tried in two places: right after normaliseGlow (13 programs compiled, take-off
+         * still cost 12) and as the very last statement of equip (identical totals, 48 and
+         * 60, to not warming at all — but a full extra composer render every time you put
+         * an armour on).
+         *
+         * Neutral at best and a real cost at worst, so it is out. What DID work is in
+         * engine/warmup.js and combat/vfx.js: keeping the light count constant, and warming
+         * the effect shaders through the composer at boot. Those took the first repulsor
+         * shot from 16 new programs to zero.
+         *
+         * If someone picks this up: the open question is why a rig rendered through
+         * ctx.warmRender() at equip does not produce the same cache keys as the same rig
+         * rendered in flight a second later. Diff them with tools/key-probe.html — that is
+         * the tool that cracked the light-count case.
          */
 
         ctx.state.armor = id;
@@ -318,6 +350,8 @@ export default {
     // Warm the boy up once the rest of the game has booted: he is 2.4 MB and the first
     // suit-up should not stall for five seconds while he downloads. Not awaited — if he
     // is late the sequence loads him itself.
+    // The boy is the AVATAR now, not just the thing an armour closes around: he is what
+    // third person looks at while you walk to the ring. Load him at boot, not on demand.
     ctx.bus.once('ready', () => { api.loadBody(); });
 
     ctx.bus.on('debug:wear', id => { api.wear(id); });
@@ -341,8 +375,21 @@ export default {
      * was wrong twice over: onfoot sets `state.armor` the moment you step onto the ring —
      * before the eight megabytes have loaded and before there is any `api.id` — and this
      * line wiped that choice out from under the sequence that was about to act on it. */
+    /* A PARKED ARMOUR IS NOT A WORN ARMOUR.
+     *
+     * `busy` covers the suit-up and the doff while they are RUNNING. The moment the doff
+     * finished, `doffing` went false — but the rig is still loaded, because it is now
+     * standing on the floor as furniture, so `api.id` was still 'mk50' and the very next
+     * frame wrote it straight back into ctx.state.armor. One frame after taking the suit
+     * off you were wearing it again, and since the HUD, the flight model and the camera all
+     * read that field, the game put you back in the suit while the empty suit was also
+     * standing in front of you. That is Jurek's "klikam X, chowa sie stroj i zaklada znowu,
+     * widze siebie jako inna osoba" — there were, briefly, two of him.
+     *
+     * `parked` is the difference between an armour on the body and an armour on the floor,
+     * and this line is about the body. */
     const busy = ctx.suitup && (ctx.suitup.playing || ctx.suitup.doffing);
-    if (api && api.id && !busy && ctx.state.armor !== api.id) ctx.state.armor = api.id;
+    if (api && api.id && !busy && !api.parked && ctx.state.armor !== api.id) ctx.state.armor = api.id;
     if (api && api.rig) api.rig.updateGlow(ctx.time || 0);
     if (!api || !api.rig) return;
     api.rig.updatePose(dt);

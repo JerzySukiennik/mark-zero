@@ -39,6 +39,8 @@ export default {
     let active = null;         // { seq, api, t, resolve }
     let stow = 0;              // gantry retraction timer after a sequence ends
     let doffing = null;        // armour currently being taken off
+    let viewBefore = null;     // the view the player chose, restored when the ritual ends
+    let viewBeforeDoff = null; // ...and the same for stepping out of an armour
     let gantry = null;
     let hold = 0;              // seconds the stage lights stay up after the suit closes
     const stage = new SuitStage(ctx);
@@ -85,26 +87,52 @@ export default {
         if (ctx.flight && ctx.flight.active && ctx.flight.deactivate) ctx.flight.deactivate();
         ctx.state.mode = 'suitup';
 
-        const rig = await ctx.suit.equip(id);
-        if (!rig) return null;
+        /* ORDER MATTERS HERE, AND IT USED TO BE BACKWARDS.
+         *
+         * `equip()` loads eight megabytes and takes seconds. It used to be the FIRST thing
+         * this function did, while the previous armour was still on screen and onfoot/ had
+         * already written the new id into ctx.state.armor. So what the player saw was:
+         * himself apparently still wearing a suit, then the suit vanishing (that is
+         * equip()'s unequip() finally running), and only then the ritual starting. Jurek's
+         * words: "najpierw widac siebie w stroju, potem bez, a dopiero potem sie zaczyna
+         * animacja".
+         *
+         * The load cannot be made shorter, but it can be moved behind the right picture.
+         * Old armour gone first, boy standing on the deck second, stage lit and ring
+         * opening third — and THEN the wait, with the machine visibly running while it
+         * happens. Same seconds, and they now read as the gantry working instead of as a
+         * glitch. */
+        ctx.suit.unequip();                       // whatever was on him is gone, now
+        ctx.suit.followPlayer = false;
 
         // Freeze the spot. He plants his feet for the ritual and does not drift with the
         // mouse for the next twenty seconds, and every sequence — plate trajectories,
         // gantry origin, the nano wave — is authored against one fixed transform.
         const stand = playerStance(ctx);
         if (stand) ctx.suit.place(stand.pos, stand.yaw);
-        ctx.suit.followPlayer = false;
+
+        // The boy has to be standing there before anything lands on him — and before the
+        // load, so the player is looking at himself rather than at nothing.
+        const body = await ctx.suit.loadBody();
+        ctx.suit.showBody(!!body);
 
         // Strike the stage lights on the spot he is standing on, before the floor opens.
         placeStage();
         stage.forArmor(id);
         stage.set(1);
         hold = 0;
+        if (ctx.ui && ctx.ui.say) {
+          ctx.ui.say((SPEC_NAMES[id] || String(id).toUpperCase()) + ' — ASSEMBLING.');
+        }
 
-        // The boy has to be standing there before anything lands on him.
-        const body = await ctx.suit.loadBody();
-        ctx.suit.showBody(!!body);
+        const rig = await ctx.suit.equip(id);
+        if (!rig) return null;
         if (body && ctx.suit.nano) ctx.suit.nano.attachBody(body);
+        // equip() resets the transform, so the stance has to be re-applied on the far side
+        // of the load: the armour must close around the boy, not around the origin.
+        if (stand) ctx.suit.place(stand.pos, stand.yaw);
+        ctx.suit.followPlayer = false;
+        ctx.suit.showBody(!!body);
 
         if (seq.origin === 'gantry') {
           if (!gantry) gantry = await Gantry.create(ctx);
@@ -118,9 +146,18 @@ export default {
         // while nothing is moving yet.
         // Only the armour and the boy — compiling the whole scene here costs a minute of
         // world shaders that are already compiled anyway.
+        /* NEVER AWAITED. This is the fourth place the same idea was tried and the third
+         * time it broke something: compileAsync resolves off a WebGL fence that a hidden
+         * or throttled tab never advances, so awaiting it stops `begin()` dead — the ring
+         * opened, the ritual never started, and nothing ever reported finished, so the
+         * ring never shut again. It also throws an uncaught TypeError out of three's own
+         * program-ready polling, which the promise's .catch() cannot see.
+         *
+         * Fire and forget: if it lands before the curtain goes up the hitch is gone, and
+         * if it does not the frame pays for it exactly as it always did. */
         if (ctx.renderer && ctx.renderer.compileAsync) {
-          try { await ctx.renderer.compileAsync(ctx.suit.root, ctx.camera, ctx.scene); }
-          catch (e) { console.warn('[suitup] precompile failed', e); }
+          try { ctx.renderer.compileAsync(ctx.suit.root, ctx.camera, ctx.scene).catch(() => {}); }
+          catch (e) { /* a warm-up nobody waits on cannot break anything */ }
         }
 
         const api = makeApi(ctx, seq, gantry);
@@ -133,6 +170,24 @@ export default {
         stow = 0;
         ctx.state.mode = 'suitup';
         ctx.state.suitClosed = false;
+        /* WATCH IT FROM OUTSIDE. Two reasons, and the second one is why it is here rather
+         * than in cameraRig.
+         *
+         * The obvious one: the ring, the arms and the plates flying in are the best thing in
+         * the game, and suiting up in first person means the player sees the inside of a
+         * helmet while it happens. Nothing drove the view, so whatever you were in, you
+         * stayed in.
+         *
+         * The measured one: the armour's textured materials compile the first time they are
+         * DRAWN. In first person they are not drawn at all during the ritual, so the driver
+         * linked twelve programs on the first frame of third-person flight instead — a
+         * freeze at the exact moment the player is moving fastest (see engine/warmup.js for
+         * the counts and for two attempts at fixing it the other way round). Showing the
+         * ritual from outside pays that cost inside an animation nobody is steering.
+         *
+         * The player's own preference is restored when the ritual ends. */
+        viewBefore = ctx.state.view;
+        ctx.state.view = 'third';
         ctx.bus.emit('suitup:start', id);
         return seq;
       },
@@ -169,6 +224,12 @@ export default {
       },
 
       cancel() {
+        // Shut the ring whatever the reason. A ritual that ends by being abandoned leaves
+        // the machine open just as surely as one that ends by finishing. The same goes for
+        // the camera: an abandoned suit-up must not leave the player stuck in a view he did
+        // not choose.
+        { const ring = ctx.world && ctx.world.ring; if (ring) ring.set(0); }
+        if (viewBefore) { ctx.state.view = viewBefore; viewBefore = null; }
         if (!active) return;
         stage.set(0);
         ctx.suit.showBody(false);
@@ -237,8 +298,10 @@ export default {
       // stepping out over the Pacific left a Mk III hanging at y = 10.2 with the boy
       // falling away underneath it and no way to reach it again — measured, doffing at
       // 1366 m out to sea. Put it down first.
+      // Same rule as the X binding in main.js: actually flying, not merely airborne.
       const fm = ctx.flight && ctx.flight.model;
-      if (ctx.state.mode === 'flight' && fm && !fm.grounded) {
+      if (ctx.state.mode === 'flight' && fm && !fm.grounded &&
+          ((fm.altitude || 0) > 4 || (fm.speed || 0) > 10)) {
         if (ctx.ui) ctx.ui.say('LAND FIRST, SIR.');
         return;
       }
@@ -267,6 +330,8 @@ export default {
       const id = suit.parked.id;
       suit.parked = null;
       suit.showBody(false);                  // he is inside it again
+      // Back into the view he was in before he stepped out.
+      if (viewBeforeDoff) { ctx.state.view = viewBeforeDoff; viewBeforeDoff = null; }
       suit.setPose('stand', true);
       ctx.bus.emit('faceplate', { open: false });
       if (suit.faceplateCtl) suit.faceplateCtl.close();
@@ -274,6 +339,7 @@ export default {
       ctx.state.suitClosed = true;
       ctx.state.faceplateOpen = false;
       self.id = id; self.progress = 1;
+      if (viewBefore) { ctx.state.view = viewBefore; viewBefore = null; }
       ctx.bus.emit('suitup:done', id);
     });
 
@@ -352,6 +418,14 @@ export default {
               pos: suit.root.position.clone(),
             };
           }
+          /* SHOW HIM. You have just stepped out of a suit of armour and the whole point of
+           * having an avatar is to see it — but in first person there is nothing to see, so
+           * Jurek's report after X was "nie widac awatara" even though the boy was there and
+           * visible the whole time. Same reasoning as the ritual: the interesting thing is
+           * outside your own head, so put the camera outside it. The view you chose comes
+           * back when you get into the armour again. */
+          if (!viewBeforeDoff) viewBeforeDoff = ctx.state.view;
+          ctx.state.view = 'third';
           ctx.state.armor = null;
           ctx.state.suitClosed = false;
           ctx.state.faceplateOpen = true;    // it is standing there with the visor up
@@ -387,6 +461,7 @@ export default {
           ctx.suit.showBody(false);      // he is inside it now
           ctx.suit.setPose('stand');
           { const ring = ctx.world && ctx.world.ring; if (ring) ring.set(0); }
+          if (viewBefore) { ctx.state.view = viewBefore; viewBefore = null; }
           ctx.bus.emit('suitup:done', self.id);
           if (resolve) resolve(self.id);
         }

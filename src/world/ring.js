@@ -14,6 +14,7 @@
 import * as THREE from 'three';
 
 export const RING = {
+  centre: 1.6,          // the deck you stand on to trigger it = radius * 0.30, the innermost band's hole
   radius: 5.2,          // the outer edge you step over
   bands: 4,             // concentric rings, innermost first
   arms: 4,
@@ -138,7 +139,20 @@ export function buildRing(ctx, M, handoff) {
     set(v) { state.target = Math.max(0, Math.min(1, v)); },
     get open() { return state.t; },
     /** Is the player standing on the disc? world/ answers, onfoot/ asks. */
-    contains(x, z) { return Math.hypot(x - root.position.x, z - root.position.z) < RING.radius; },
+    /* THE CENTRE, not the whole disc.
+     *
+     * This used to be the full 5.2 m radius, so brushing the outer band anywhere on the way
+     * past fired the ritual — Jurek's report was that it suits him up "wherever I stand on
+     * the ring". The platform you are meant to stand on is the deck in the middle; the bands
+     * around it are the machine. So the trigger is the deck, and the outer ring is scenery
+     * you can walk over. */
+    contains(x, z) {
+      return Math.hypot(x - root.position.x, z - root.position.z) < RING.centre;
+    },
+    // A wider skirt, for "someone is approaching" — the machine waking up, not firing.
+    near(x, z) {
+      return Math.hypot(x - root.position.x, z - root.position.z) < RING.radius * 1.6;
+    },
 
     update(dt) {
       // Asymmetric, and deliberately: opening is machinery doing a job and takes its time;

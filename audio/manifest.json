@@ -531,10 +531,10 @@
   },
   "music": {
     "first_flight": {
-      "file": "audio/music/first-flight.mp3",
+      "file": "audio/music/first-flight-djawadi.mp3",
       "dur": 187.82,
       "src": "Ramin Djawadi — \"First Flight\", Iron Man (2008) complete score, no SFX",
-      "note": "Chosen by Jurek as THE track. Starts on suit-up and runs to its end. Do not add other music.",
+      "note": "Chosen by Jurek as THE track. Starts on suit-up and runs to its end. Do not add other music. The filename carries the composer because the plain first-flight.mp3 used to be a DIFFERENT recording and browsers went on serving that one out of cache long after the file on disk was replaced -- Jurek kept hearing the old song. Never re-use a music filename; give a new track a new name.",
       "loop": false
     }
   }

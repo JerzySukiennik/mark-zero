@@ -52,9 +52,24 @@ export class ProjectileSystem {
 
     // Three travelling lights: the bolt has to actually light what it flies past.
     this.lights = [];
+    /* NEVER TOGGLE A LIGHT'S `visible`. IT RECOMPILES THE WHOLE SCENE.
+     *
+     * three is a forward renderer: the number of lights is baked into EVERY material's
+     * shader as a #define, so the moment that number changes, every material in the scene
+     * needs a new program. And a light with `visible = false` is skipped during scene
+     * traversal, so hiding one changes the count exactly as removing it would.
+     *
+     * That is the multi-second freeze on the first take-off and the first shot. Measured by
+     * diffing three's own program cache keys across the two: the keys are identical except
+     * for the light-count field, `1,10` before and `1,12` after. Not the plume shader, not
+     * the bolt shader — the ENTIRE SCENE recompiling because two point lights appeared.
+     *
+     * So these lights are visible from construction to the end of the game and are turned
+     * off by setting `intensity = 0`. A zero-intensity light still costs a little in every
+     * fragment shader; paying that constantly is far cheaper than a recompile storm at the
+     * exact moment the player first does something interesting. */
     for (let i = 0; i < 3; i++) {
       const l = new THREE.PointLight(REPULSOR.light, 0, 30, 2);
-      l.visible = false;
       this.root.add(l);
       this.lights.push(l);
     }
@@ -167,8 +182,7 @@ export class ProjectileSystem {
     for (let i = 0; i < this.lights.length; i++) {
       const p = this.live[this.live.length - 1 - i];
       const l = this.lights[i];
-      if (!p) { l.visible = false; continue; }
-      l.visible = true;
+      if (!p) { l.intensity = 0; continue; }   // intensity, not visible: see the constructor
       l.position.copy(p.pos);
       l.intensity = 22 * p.power;
     }

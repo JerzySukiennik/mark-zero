@@ -991,3 +991,53 @@ frame (it had drifted to naming a different Mark than the one on the body, and `
 reads thrust and mass from `ARMOR_SPECS` by that id), and `audio/` reads the armour from the
 game state rather than remembering its own, so a suit put on without the ritual no longer
 leaves the footsteps silent.
+
+## Finding a stutter: the performance probes
+
+Three probes in `tools/`, each answering a different question. All of them are run the same
+way and all of them print to `shots/<dir>/_log.txt`:
+
+```bash
+python3 serve.py 8781 &
+python3 tools/recv.py 8802 shots/look &
+./tools/shoot-look.sh tools/<probe>.html 160
+```
+
+**`stall-probe.html` — "why does the first X freeze the game?"**
+Counts `renderer.info.programs` before and after each first-time action. A jump means GPU
+programs are linking mid-play, which is an uninterruptible main-thread block of 20-150 ms
+each. This is what found the freeze on the first suit-up / take-off / shot.
+
+**`key-probe.html` — "why did my shader warm-up not help?"**
+Dumps three's own `program.cacheKey` after boot and again after play, then prints, for each
+key that is new, the boot key it matches for longest and where the two part. This is the only
+tool that can answer *why* a program cache missed, and it is what cracked the light-count
+case after two wrong guesses. Reach for it before theorising.
+
+**`gc-spike-probe.html` / `clone-probe.html` — "why does it hitch every few seconds?"**
+The first measures heap growth per simulation tick; the second patches `clone()`, the
+`getWorld*` helpers and the Rapier query methods to count allocating calls per tick, per
+module. Steady-state garbage is what produces periodic GC pauses.
+
+### Two rules these probes exist to enforce
+
+**Never toggle `visible` on a light.** three bakes the light count into every material's
+shader, and a hidden light is skipped during traversal, so hiding one recompiles the entire
+scene. Turn lights off with `intensity = 0`. See the note in `combat/vfx.js`.
+
+**Milliseconds from a headless run are worthless.** The rig uses SwiftShader, so wall-clock
+time is dominated by software rasterisation — in one run the *second* repulsor shot measured
+slower than the first. Program counts, allocation counts and geometry invariants are
+hardware-independent; those are the numbers to trust and to quote.
+
+### Known, still open
+
+Twelve programs link on the first frame of third-person flight: the armour's textured
+materials, which are never drawn while on foot in first person. Warming the rig at `equip()`
+was tried in two places and measured neutral — see the note in `suit/suit.js`.
+
+Cruise allocates roughly 8 kB per simulation tick (~1 MB/s), which is enough to cause
+periodic GC pauses. `clone()` is ruled out at 1 call/tick; the tracked churn is concentrated
+in Rapier queries (~4.3/tick) and three's world-transform helpers (~12/tick), none of which
+obviously accounts for the whole figure. Pinning down the rest needs Chrome DevTools'
+allocation profiler on real hardware — the headless heap numbers are too coarse.

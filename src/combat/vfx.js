@@ -15,11 +15,22 @@
 import * as THREE from 'three';
 import { rng } from './fracture.js';
 
+/* WHITE-HOT GOING ORANGE, not pink.
+ *
+ * This was the MCU repulsor palette — a white core wrapped in magenta — taken off the
+ * night frames where the light on the asphalt really is pink. On a lit stage in daylight
+ * it reads as neither fire nor light: Jurek's words were that the plumes are "purple,
+ * flat, and see-through like Roblox trails". What he asked for, and what a rocket actually
+ * looks like from a metre away, is the top of a flame: white at the throat where it is
+ * hottest, running to orange as it cools along its length.
+ *
+ * The gradient is the point. One flat colour cannot be fire whatever colour it is. */
 export const REPULSOR = {
-  core: 0xffffff,
-  inner: 0xffd9f4,
-  bloom: 0xff4fc4,
-  light: 0xff67cf,
+  core: 0xffffff,      // the throat, blown out
+  inner: 0xffe6b8,     // white going warm
+  bloom: 0xff8a24,     // the body of the flame
+  tail: 0xd63c05,      // where it cools out
+  light: 0xffa040,
 };
 
 export function glowMaterial(color, opts = {}) {
@@ -32,6 +43,10 @@ export function glowMaterial(color, opts = {}) {
     depthWrite: opts.depthWrite ?? false,
     depthTest: opts.depthTest ?? true,
     side: opts.side ?? THREE.FrontSide,
+    // Lets a mesh carry its own gradient. A flame is not one colour, and the cheapest way
+    // to say so is to bake white-at-the-throat / orange-at-the-mouth into the geometry
+    // rather than to stack ever more single-colour cones on top of each other.
+    vertexColors: opts.vertexColors === true,
     fog: false,
   });
 }
@@ -128,9 +143,24 @@ export class VFX {
 
     // Point lights are expensive; a small pool, oldest reused first.
     this.lights = [];
+    /* NEVER TOGGLE A LIGHT'S `visible`. IT RECOMPILES THE WHOLE SCENE.
+     *
+     * three is a forward renderer: the number of lights is baked into EVERY material's
+     * shader as a #define, so the moment that number changes, every material in the scene
+     * needs a new program. And a light with `visible = false` is skipped during scene
+     * traversal, so hiding one changes the count exactly as removing it would.
+     *
+     * That is the multi-second freeze on the first take-off and the first shot. Measured by
+     * diffing three's own program cache keys across the two: the keys are identical except
+     * for the light-count field, `1,10` before and `1,12` after. Not the plume shader, not
+     * the bolt shader — the ENTIRE SCENE recompiling because two point lights appeared.
+     *
+     * So these lights are visible from construction to the end of the game and are turned
+     * off by setting `intensity = 0`. A zero-intensity light still costs a little in every
+     * fragment shader; paying that constantly is far cheaper than a recompile storm at the
+     * exact moment the player first does something interesting. */
     for (let i = 0; i < 5; i++) {
       const l = new THREE.PointLight(REPULSOR.light, 0, 15, 2);
-      l.visible = false;
       this.root.add(l);
       this.lights.push({ light: l, t: 0, life: 0, base: 0, order: i });
     }
@@ -155,8 +185,7 @@ export class VFX {
     const slot = this.lights[this._lightCursor++ % this.lights.length];
     slot.light.position.copy(pos);
     slot.light.color.setHex(color);
-    slot.light.intensity = intensity;
-    slot.light.visible = true;
+    slot.light.intensity = intensity;      // never `visible` — see the note in the constructor
     slot.base = intensity;
     slot.t = 0; slot.life = life;
     return slot;
@@ -352,10 +381,10 @@ export class VFX {
       if (it.anim) it.anim(it.mesh, k, dt);
     }
     for (const s of this.lights) {
-      if (!s.light.visible) continue;
+      if (s.light.intensity <= 0 && s.t >= s.life) continue;
       s.t += dt;
       const k = s.t / s.life;
-      if (k >= 1) { s.light.visible = false; s.light.intensity = 0; continue; }
+      if (k >= 1) { s.light.intensity = 0; continue; }
       s.light.intensity = s.base * (1 - k) * (1 - k);
     }
   }

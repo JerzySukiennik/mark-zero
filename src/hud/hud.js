@@ -249,6 +249,13 @@ export default {
     };
     ctx.hud = api;
 
+    /* THE HUD IS THE INSIDE OF A HELMET. It only exists when there is a helmet.
+     * Joining the game put you in first person with the full JARVIS interface over your
+     * eyes while you were standing there in a t-shirt — the visor was drawn because
+     * nothing ever said "you are not wearing anything". A boy walking to the ring should
+     * just see the world. */
+    const wantVisor = () => !!(ctx.state.armor && ctx.state.suitClosed);
+    api.gate = () => { if (!wantVisor()) api.hide(); };
     ctx.bus.on('suitup:start', () => api.show(true));
     ctx.bus.on('suitup:done', () => api.show(false));
     ctx.bus.on('flight:active', () => api.show(true));
@@ -264,6 +271,9 @@ export default {
   render(ctx) {
     const api = ctx.hud;
     if (!api) return;
+    // Every frame, not just on the events: the visor belongs to a closed helmet and there
+    // are more ways to end up without one than there are events announcing it.
+    if (api.gate) api.gate();
 
     // Degraded path: loop.js drops the composer if a post shader will not compile, and
     // then it calls renderer.render() directly — our wrapper never runs and the visor

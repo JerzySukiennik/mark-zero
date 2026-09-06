@@ -19,6 +19,8 @@
 
 import { dedupeMaterials, mergeStatic, trimShadowCasters } from './engine/dedupe.js';
 import { installMenu } from './engine/menu.js';
+import { warmGameplay } from './engine/warmup.js';
+import { installNet } from './net/net.js';
 import * as THREE from 'three';
 import { createRenderer } from './engine/renderer.js';
 import { buildEnvironment } from './engine/env.js';
@@ -296,6 +298,12 @@ async function main() {
 
   /* The front screen goes up before anything else takes the pointer. Single player hands
    * control to installShell's normal flow; everything else stays on the menu. */
+  /* Multiplayer sits BESIDE the modules, not among them: engine/registry.js is frozen and
+   * says no task may add an entry. Same pattern as the menu — installed here, ticked from
+   * the loop. If it is never joined it costs one object and does nothing, so single player
+   * is untouched whether or not anyone else is in the sky. */
+  installNet(ctx);
+
   const menu = installMenu(ctx, {
     onStart() {
       ctx.bus.emit('restart');
@@ -308,6 +316,29 @@ async function main() {
   installShell(ctx, loop, ui);
 
   loop.render();
+
+  /* Pay for the shaders HERE, while the boot panel is still up and a pause is expected —
+   * not on the frame the player first takes off or first pulls the trigger.
+   *
+   * THE ENVIRONMENT MUST BE ASSIGNED FIRST, and this is the whole reason the first attempt
+   * at this failed. `scene.environment` is set inside env.update(), which only runs from
+   * loop.step() — so at this point in boot it is still null. A MeshStandardMaterial compiled
+   * with no environment map is a DIFFERENT program from the same material compiled with one,
+   * so warming here without this line pre-compiles thirteen variants the game will never
+   * draw and then compiles the real ones anyway, mid-play, exactly as before. Measured:
+   * 33 -> 46 programs at boot and 62 -> 84 by the first shot, i.e. strictly worse.
+   *
+   * One env tick, then warm. See engine/warmup.js. */
+  try { if (ctx.env && ctx.env.update) { ctx.env.update(0); ctx.state.envMix = ctx.env.k; } }
+  catch (e) { console.warn('[boot] env tick before warm-up failed:', e && e.message); }
+  // The oven must draw through the same pass the game does, or every program it compiles is
+  // for the wrong output colour space. See engine/warmup.js.
+  ctx.warmRender = () => loop.render();
+  {
+    const w = warmGameplay(ctx);
+    console.log(`[MARK ZERO] shader warm-up: ${w.n} stand-ins, ${w.after - w.before} new programs in ${w.ms.toFixed(0)} ms (${w.after} total, env=${ctx.scene.environment ? 'set' : 'NULL'})`);
+  }
+
   setTimeout(bootDone, 260);
   menu.show();
   loop.start();
@@ -414,14 +445,33 @@ function installShell(ctx, loop, ui) {
       if (ctx.state.paused || !ctx.state.armor || !ctx.state.suitClosed) return;
       ctx.bus.emit('faceplate:toggle');
     } else if (e.code === 'KeyX') {
-      // Take the armour off. Same shape as the faceplate wiring above: suit/ owns the
-      // mechanism, the shell owns the keyboard. Refused in the air, because stepping out
-      // of a suit at 200 m/s is a death, not a feature.
-      if (ctx.state.paused || !ctx.state.armor) return;
+      /* X IS A TOGGLE. Off, and back on again with the same key.
+       *
+       * It used to only take the armour OFF, and getting back in meant walking up to the
+       * shell you had left standing and holding F. That was never what Jurek asked for —
+       * "jak klikam X to sie chowa stroj... X znowu zaklada" — and in practice it read as
+       * the mechanism being broken: you press a key, you are out, and now the game wants a
+       * walk and a second key before you can move again.
+       *
+       * So: wearing armour, X takes it off. Standing next to the armour you took off, X
+       * puts it back on. The F-hold on a parked shell still works and is still the way to
+       * get into an armour you did not take off yourself. */
+      if (ctx.state.paused) return;
       const f = ctx.flight;
-      const airborne = f && f.model && !f.model.grounded;
-      if (airborne) { if (ctx.ui) ctx.ui.say('Not in the air.'); return; }
-      ctx.bus.emit('suit:doff');
+      if (ctx.state.armor) {
+        /* Refused in the air — but "in the air" has to mean actually flying, not merely
+         * "not touching the ground this frame". The old test was `!grounded`, and a suit
+         * hovering a metre up at a standstill is not grounded, so X was refused while the
+         * player was to all appearances standing still. That reads exactly like the doff
+         * being broken, which is what it was reported as. Stepping out at 200 m/s is a
+         * death; stepping out of a hover is a short drop. */
+        const m = f && f.model;
+        const high = m && !m.grounded && ((m.altitude || 0) > 4 || (m.speed || 0) > 10);
+        if (high) { if (ctx.ui) ctx.ui.say('LAND FIRST, SIR.'); return; }
+        ctx.bus.emit('suit:doff');
+      } else if (ctx.suit && ctx.suit.parked) {
+        ctx.bus.emit('suit:reenter');
+      }
     }
   });
 

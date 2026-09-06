@@ -71,6 +71,15 @@ const SPEED_OF_SOUND = 340.29;
  * dragRatio.back is new: drag flying TAIL-FIRST. The k table was symmetric on Z, so an
  * armour going backwards was as slippery as one going nose-first and nothing ever bled a
  * reversed flight off. */
+/* `selfDon` — this armour puts ITSELF on, and needs no machine to do it.
+ *
+ * Jurek's rule: "jezeli ten stroj nie potrzebuje zakladania, tak jak tamten mark 3 i ten
+ * ostatni, to nie powinien miec w ogole tych ramion wychodzacych, tylko powinien po prostu
+ * sam sie zakladac... powinien moc sie zakladac bez ringu". Two consequences, both handled
+ * in suit/suitup.js: the ring's arms stay down for these, and the ritual can be started
+ * anywhere on the map rather than only on the ring's deck. Everything else — the plates
+ * flying in, the timing, the music — is the same for every armour, which is the other half
+ * of what he asked for ("kazdy stroj powinien miec takie samo zakladanie"). */
 export const ARMOR_SPECS = {
   mk1: {
     name: 'MARK I', mass: 340,
@@ -94,7 +103,7 @@ export const ARMOR_SPECS = {
     topSpeed: 320, dragRatio: { lateral: 4.0, vertical: 5.6, back: 8 },
     maxRate: 3.1, rollRate: 4.4, alphaMax: 14, rollAlphaMax: 25,
     rateFalloffRef: 210, stability: 1.05, integrity: 1600, power: 1.0,
-    boost: 1.45, flaw: null,
+    boost: 1.45, flaw: null, selfDon: true,     // the suitcase armour: assembles itself
   },
   mk42: {
     name: 'MARK XLII', mass: 190,
@@ -110,7 +119,7 @@ export const ARMOR_SPECS = {
     topSpeed: 380, dragRatio: { lateral: 4.2, vertical: 5.8, back: 8.5 },
     maxRate: 3.6, rollRate: 5.2, alphaMax: 18, rollAlphaMax: 30,
     rateFalloffRef: 240, stability: 1.2, integrity: 2000, power: 1.25,
-    boost: 1.5, flaw: null,
+    boost: 1.5, flaw: null, selfDon: true,      // nanotech: it IS the machine
   },
 };
 
@@ -122,6 +131,7 @@ const _d = new THREE.Vector3();
 const _t = new THREE.Vector3();
 const _w = new THREE.Vector3();
 const _bv = new THREE.Vector3();
+const _up = new THREE.Vector3();       // fall-arrest scratch, world +Y rotated into body axes
 const _q = new THREE.Quaternion();
 const _qi = new THREE.Quaternion();
 const _q2 = new THREE.Quaternion();
@@ -133,9 +143,48 @@ const Y_AXIS = new THREE.Vector3(0, 1, 0);
 const _e = new THREE.Euler(0, 0, 0, 'YXZ');
 const _m = new THREE.Matrix4();
 
-// Retro authority as a fraction of the mains. 0.85 stops a Mk III from top speed in about
-// three and a half seconds; the old spec.retro (0.28, forward axis only) took nineteen.
-const BRAKE_K = 0.85;
+/* Retro authority as a fraction of the mains.
+ *
+ * History, because this number has been wrong twice in opposite directions. The original
+ * spec.retro (0.28, forward axis only) took nineteen seconds and three kilometres to stop
+ * a Mk III — "it tries to stop, but very badly". 0.85 brought that to three and a half
+ * seconds, which is physically defensible and still much too slow to PLAY: Jurek's test is
+ * weaving between the blocks on the stage, and at three and a half seconds you commit to a
+ * line the moment you see the gap and there is nothing you can do about it.
+ *
+ * 2.8 is the film's answer rather than the airframe's. The suit stopping is not the mains
+ * throttling back — it is all four repulsors swinging round to face the way it is going and
+ * burning at full power, which is legitimately several times main thrust. It stops a Mk III
+ * from 150 m/s in about half a second, so a gap you spot late is a gap you can still take.
+ *
+ * This is safe to make large because the stopping half is impulse-capped below: the brake
+ * can never produce speed in the opposite direction, however hard it burns. It converges
+ * on the stop, it does not shoot past it. */
+const BRAKE_K = 2.8;
+
+/* How fast Space arrests a fall, in seconds.
+ *
+ * "jak spada to jak klikne spacje to powinien sie mega szybko zatrzymac jakby w powietrzu
+ * bo tak jest zawsze w filmie i potem dosyc normalnie wolno leciec do gory" — the drop is
+ * arrested almost on the frame, and only THEN does the slow climb start. The two halves are
+ * separate forces on purpose: making the ordinary vertical thrust strong enough to stop a
+ * terminal-velocity fall quickly would also fire the suit into the sky the moment you tap
+ * Space in level flight, which is the "wystrzelal" he explicitly does not want. */
+const FALL_ARREST_TIME = 0.22;
+
+/* How fast holding Space climbs, in m/s.
+ *
+ * Measured before this existed: a held Space put a Mk-class suit at 33 m/s upward inside a
+ * second, from level flight and from a caught fall alike. That is the launch Jurek said he
+ * did not want ("wazne zeby po prostu nie wystrzelal") — the fall stops beautifully and then
+ * the suit leaves the map.
+ *
+ * A governor rather than a weaker thruster: full authority while the climb is slow, tapering
+ * to nothing as it approaches this rate. So take-off is still immediate, arresting a fall is
+ * still violent (that is a separate force, and it only ever fights DOWNWARD speed), and the
+ * steady climb settles somewhere a player can fly. Climbing fast is still available — you
+ * point the nose up and use the mains, which is how the suit does it in the film anyway. */
+const CLIMB_RATE = 15;
 
 function clamp(x, a, b) { return x < a ? a : x > b ? b : x; }
 
@@ -508,7 +557,32 @@ export class FlightModel {
     }
     if (!droneMode) {
       _f.x += cmd.lateral * spec.lateral * power;
-      _f.y += cmd.vertical * spec.vertical * power;
+      // Vertical thrust, governed on the way up (see CLIMB_RATE). The taper reads world
+      // climb rate, not body +Y, so it cannot be defeated by rolling the suit over.
+      let vGov = 1;
+      if (cmd.vertical > 0 && this.velocity.y > 0) {
+        vGov = clamp(1 - this.velocity.y / CLIMB_RATE, 0, 1);
+      }
+      _f.y += cmd.vertical * spec.vertical * power * (cmd.vertical > 0 ? vGov : 1);
+
+      /* FALL ARREST. Space while falling stops the fall, then climbs.
+       *
+       * Body axes here are the suit's, and the fall we care about is a fall in the WORLD —
+       * a suit nose-down at 70 m/s is falling whatever its own +Y says. So this reads the
+       * world velocity and pushes straight up in the world, then hands the force back in
+       * body axes for the rest of the pipeline.
+       *
+       * Capped at exactly the impulse that brings vertical speed to zero this step, so it
+       * arrests and stops. It cannot overshoot into a launch no matter how far you fell,
+       * and the climb that follows is the ordinary spec.vertical thrust above — slow, the
+       * way he asked for. */
+      if (cmd.vertical > 0.05 && this.velocity.y < -0.5) {
+        const need = (-this.velocity.y / FALL_ARREST_TIME) * spec.mass;      // to arrest
+        const cap = (-this.velocity.y / dt) * spec.mass;                     // to zero it now
+        _up.set(0, Math.min(need, cap) * cmd.vertical, 0)
+          .applyQuaternion(_q.copy(this.quaternion).invert());
+        _f.add(_up);
+      }
     }
 
     const manualCmd = Math.abs(cmd.forward) + Math.abs(cmd.lateral) + Math.abs(cmd.vertical);
@@ -947,6 +1021,17 @@ export default {
     ctx.flight = api;
 
     ctx.bus.on('armor:selected', (id) => api.setArmor(id));
+    /* WHATEVER IS WORN IS WHAT WE FLY.
+     *
+     * The spec used to follow only 'suitup:done' and 'armor:selected', which is every route
+     * through the ritual and nothing else. Anything that equips an armour directly — the
+     * debug wear, and the re-don paths — left the flight model on the PREVIOUS armour's
+     * numbers: its mass, its thrust, its top speed, and the name on the HUD. Caught with a
+     * Mk L on the player and "MARK III" on the visor, flying Mk III physics.
+     *
+     * suit/ emits this whenever an armour is actually installed, so it is the honest
+     * authority. setArmor() is idempotent, so the ritual firing both is harmless. */
+    ctx.bus.on('suit:equipped', ({ id }) => api.setArmor(id));
     // He takes off FROM THE PAD HE JUST SUITED UP ON. activate() with no position falls
     // back to world.spawn, which is the living room — so the ritual used to end in a
     // black basement and the very next frame put the player hovering eight metres up in

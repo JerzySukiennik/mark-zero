@@ -465,6 +465,22 @@ function wire(ctx, self) {
     });
   });
 
+  /* THE CHARGED SHOT HAS ITS OWN EVENT, AND HAD NO SOUND AT ALL.
+   *
+   * combat/ emits 'repulsor:charged' for the Mk L's converging beam, and everything in this
+   * file was listening for 'repulsor:fire'. So the biggest weapon in the game fired in
+   * silence — Jurek's "strzelanie duzym strzalem nie ma dzwieku i jest slabe", and the
+   * silence is most of why it read as weak.
+   *
+   * Layered rather than sampled: the charged recording underneath and an ordinary repulsor
+   * shot on top pitched well down. Two things at once, slightly detuned, is what makes a big
+   * gun sound big — one sample played louder just sounds like the same gun, closer. */
+  bus.on('repulsor:charged', () => {
+    mixer.play('jurek_repulsor_charged', { gain: 1.0, rate: 0.82 });
+    mixer.play('jurek_repulsor_01', { gain: 0.85, rate: 0.62 });
+    if (mixer.duck) mixer.duck(0.55, 0.9);         // let it own the mix for a moment
+  });
+
   bus.on('repulsor:fire', (p = {}) => {
     const power = clamp(p.power ?? 1, 0.2, 2);
     const pan = handPan(p.hand, 0.35);
