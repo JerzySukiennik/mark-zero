@@ -710,3 +710,29 @@ place that was reported as lagging, and the cause was not established. Reverted.
 from earlier in this file applies to my own good ideas too: an optimisation that cannot be
 shown to help does not ship, and one that can be shown to hurt where it matters ships even
 less.
+
+### Where the workshop's remaining draw calls actually live
+
+After the bake, the workshop still cost 723 calls against only 545 671 triangles — so the
+cost is submissions, not geometry, and the bake had not found them. Counting visible meshes
+by owner rather than guessing:
+
+    visible meshes in the whole scene: 1108
+        737  world
+        371  ONFOOT          <-- the armour display rack
+    meshes passing the frustum: 679
+        371  ONFOOT          <-- every single one
+        308  world
+
+**More than half the room's submissions are the five display cases.** Each silhouette is
+about seventy-five little boxes. They are now baked inside their own group — `mergeStatic(g)`
+at the end of `buildSilhouette`, and the scoping is the safety argument: onfoot holds each
+figure as `c.figure` and hides it with `c.figure.visible = false` when a real armour model
+arrives to take its place, so collapsing the parts into the *same* group keeps that
+reference meaning what it meant. Collapsing them into the rack above would silently stop
+hiding anything.
+
+Honest result: **371 -> 347 meshes, 723 -> 699 calls.** Most of the rack did not qualify for
+the merge and it is not yet established why — the filter rejects it for one of its own
+reasons and that has not been chased down. Recorded as an open lead rather than dressed up:
+the next pass should instrument `mergeable()` to report *which* test rejected each mesh.

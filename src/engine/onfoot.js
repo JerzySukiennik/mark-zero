@@ -28,6 +28,7 @@
 // What is NOT in here: the house. That is world/. `buildFallbackDescent` is a stairwell
 // and a dark room that exists only so the game is walkable if world/ ever fails to init;
 // it deletes itself the moment ctx.world.armorStands shows up.
+import { mergeStatic } from './dedupe.js';
 import * as THREE from 'three';
 
 // --- the body ----------------------------------------------------------------------
@@ -2105,6 +2106,18 @@ function buildSilhouette(a) {
   );
   eyes.position.set(0, 2.00, 0.161);
   g.add(eyes);
+
+  /* BAKE IT. A silhouette is about seventy-five little boxes and every one of them is a
+   * draw call, five times over for the five cases. Measured in the workshop: 371 of the
+   * 679 meshes passing the frustum belonged to this group — more than half the room's
+   * submissions were the display rack.
+   *
+   * Merged INSIDE `g`, not into the rack above it, and that scoping is the whole safety
+   * argument: onfoot holds each figure as `c.figure` and hides it with `c.figure.visible
+   * = false` when the real armour model arrives to take its place. Collapse the parts into
+   * the same group and that reference still means what it meant. Collapse them into the
+   * rack and it silently stops hiding anything. */
+  try { mergeStatic(g, 2); } catch (e) { /* a rack that draws slowly still draws */ }
   return g;
 }
 
