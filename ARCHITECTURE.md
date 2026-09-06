@@ -377,3 +377,52 @@ Two traps, both measured:
 | S | pure velocity-opposing brake | blend of stop and reverse | the impulse cap made backward flight impossible *by construction* |
 | boost | flat ×1.45 on the mains | punch decaying over 0.35 s + 25% forward-drag cut | every feedback channel was already saturated by W alone; `state.thrust` now clamps at 1.4, not 1 |
 | turn authority | fixed | ×(1 + 0.6·(1 − throttle)) | cut the engine, spin, burn the other way |
+
+## Performance: where the frame actually goes (2026-09-06)
+
+Measured on the live scene rather than guessed. The numbers that mattered:
+
+| | before | after | how |
+|---|---|---|---|
+| distinct material objects | 1085 | 428 | `engine/dedupe.js`, run once on the world root at boot |
+| lights in the scene graph | 19 (8 at intensity 0) | 14 | `world.js` `_reapDarkLights` |
+| first frame back in the living room after a workshop trip | 95 ms | 10.3 ms | `renderer.compileAsync` at boot |
+| simulation, per tick | 0.25 ms | 0.24 ms | unchanged; the sim was never the problem |
+
+**Duplicate materials were the single biggest piece of avoidable work.** 6668 meshes carried
+1085 material objects but only **185 distinct material definitions** — eighty-two separate
+meshes each holding a private copy of the same `MeshStandardMaterial #6b5a3c roughness
+0.98`. It happens naturally when props are built in loops, it is invisible on screen, and
+it costs a state block, a uniform upload and a lost batch per copy on both the colour pass
+and every shadow pass. `dedupeMaterials` folds them together, deliberately skipping
+anything a module mutates per instance (transparent/additive VFX whose opacity is animated,
+anything with `userData.glowBase`, non-zero emissives, ShaderMaterials) — see the header of
+that file for the full list and the reasoning.
+
+Proven safe by A/B, not by eye: the same headless rig (`tools/opt-check.html`, run with and
+without `?nodedupe=1`) rendering the living room, the workshop and the town, compared pixel
+by pixel — **0.00% of sampled pixels differ by more than 6 in the living room and the town**
+(max channel delta 4 and 7), 0.44% in the workshop from animated practicals landing on a
+different frame. Keep that flag: it is how the next person checks this again.
+
+**A light at zero intensity is not a free light.** three's forward renderer compiles the
+light COUNT into every material and evaluates all of them per fragment, so the three
+suit-up spots and five indoor-daylight sources — switched off for most of the game — were
+charging full price across 400-odd materials for a contribution of exactly zero. They are
+now removed from the graph and put back the moment their owner turns them up; their owners
+keep their references and go on setting `intensity` on the detached object, so nothing else
+had to change.
+
+**Shader compilation is what a "lag spike" usually is.** three builds a material's program
+the first time it is actually drawn, inside that frame. `compileAsync` at boot removed the
+95 ms hitch on returning to the living room. The armour gets the same treatment in
+`suit.js` equip(), and there it is the SYNCHRONOUS `compile()` on the rig alone — the async
+form resolves off a WebGL fence that a hidden or throttled tab never advances, and awaiting
+it hung equip() outright with no suit and no error. Compiling `ctx.scene` synchronously is
+also out: it walks every mesh in the world and locked the page hard.
+
+Caveat recorded honestly: GPU stall timings could not be verified in the browser pane used
+for this session (hidden, not compositing — the same suit-up measured 204 ms and 1190 ms on
+consecutive runs). The material, light and program COUNTS above are graph facts and are
+reliable; the millisecond figures for compile warm-ups are not, beyond the living-room one
+which reproduced twice.

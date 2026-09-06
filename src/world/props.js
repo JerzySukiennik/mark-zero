@@ -312,6 +312,17 @@ export function buildMaterials() {
   const wood = woodTexture();
   const asphalt = asphaltTexture();
 
+  /* EVERY envMapIntensity BELOW WAS TUNED BLIND.
+   *
+   * They were chosen while `scene.environment` was null — env.js seeded its cube tracker
+   * with the state the game boots in, so the guarded swap never fired and the map was
+   * never assigned (fixed 2026-09-05). An envMapIntensity multiplies a contribution that
+   * did not exist, so every one of these numbers was doing literally nothing, and they had
+   * been pushed up to 1.45, 2.0, 2.6 trying to make the house read against the cliff.
+   *
+   * The moment the map went live, all of that arrived at once and the living room came
+   * back white — "it's still terribly bright in the house". Halved across the board, and
+   * they mean something now, so they can be tuned honestly from here. */
   const M = {
     // The house. Reference: bright white man-made object against a dusty warm cliff.
     /* Whiter and shinier than a real wall, deliberately. The whole composition is one
@@ -321,22 +332,27 @@ export function buildMaterials() {
      * grey Malibu house is just a bunker. envMapIntensity is what lets the sky dome do
      * the work the bounce card does on a film set. */
     slab: new THREE.MeshStandardMaterial({
-      color: 0xf6f4ee, roughness: 0.62, metalness: 0.0, envMapIntensity: 1.45,
+      /* The slab is the floor you stand on at spawn, not just the exterior plaster: a ray
+       * straight down the spawn column hits THIS material, because the finish floor does
+       * not reach the ocean-facing edge of the living room. So its albedo is what "the
+       * house is terribly bright" actually means, and paper-white is wrong for a lit
+       * interior surface anyway. Was 0xf6f4ee. */
+      color: 0xcfcbc2, roughness: 0.62, metalness: 0.0, envMapIntensity: 0.72,
       roughnessMap: grain, bumpMap: grain, bumpScale: 0.012,
     }),
-    slabEdge: new THREE.MeshStandardMaterial({ color: 0xefece5, roughness: 0.7, envMapIntensity: 1.3 }),
+    slabEdge: new THREE.MeshStandardMaterial({ color: 0xefece5, roughness: 0.7, envMapIntensity: 0.65 }),
     column: new THREE.MeshStandardMaterial({
-      color: 0xe8e4da, roughness: 0.74, envMapIntensity: 1.25, bumpMap: grain, bumpScale: 0.02,
+      color: 0xe8e4da, roughness: 0.74, envMapIntensity: 0.62, bumpMap: grain, bumpScale: 0.02,
     }),
     // Dark tinted glazing: from outside the interior must read as ONE DARK BAND.
     glass: new THREE.MeshPhysicalMaterial({
       color: 0x0a151c, roughness: 0.045, metalness: 0.0,
-      transparent: true, opacity: 0.46, envMapIntensity: 2.0,
+      transparent: true, opacity: 0.46, envMapIntensity: 1.15,
       side: THREE.DoubleSide, depthWrite: false,
     }),
     glassClear: new THREE.MeshPhysicalMaterial({
       color: 0xbfe3ee, roughness: 0.03, metalness: 0.0,
-      transparent: true, opacity: 0.17, envMapIntensity: 2.6,
+      transparent: true, opacity: 0.17, envMapIntensity: 1.45,
       side: THREE.DoubleSide, depthWrite: false,
     }),
     mullion: new THREE.MeshStandardMaterial({ color: 0x2b3238, roughness: 0.45, metalness: 0.7 }),
@@ -372,10 +388,16 @@ export function buildMaterials() {
       color: 0x4e555c, roughness: 0.68, metalness: 0.12, envMapIntensity: 0.5,
     }),
     bronze: new THREE.MeshStandardMaterial({ color: 0x3f5a52, roughness: 0.55, metalness: 0.75 }),
-    interiorFloor: new THREE.MeshStandardMaterial({ color: 0xb9b1a6, roughness: 0.55 }),
-    interiorWall: new THREE.MeshStandardMaterial({ color: 0xece9e3, roughness: 0.9 }),
+    /* Polished concrete, not sand. At 0xb9b1a6 under a 2.3 sun this floor rendered at a
+     * mean luma of 201 out of 255 — 79% of the way to white — and filled the bottom half
+     * of the spawn frame with a featureless pale sheet. Jurek called the room "terribly
+     * overexposed" twice, and he was reading the floor. The lighting knobs barely touch
+     * it: dropping exposure, sun and bounce all the way to 0.66/1.30/0.30 only took it
+     * from 201 to 177, because the dominant term is the albedo, not the light. */
+    interiorFloor: new THREE.MeshStandardMaterial({ color: 0x8a837a, roughness: 0.5, envMapIntensity: 0.5 }),
+    interiorWall: new THREE.MeshStandardMaterial({ color: 0xd8d4cc, roughness: 0.9, envMapIntensity: 0.55 }),
     boardWall: new THREE.MeshStandardMaterial({ color: 0xffffff, map: board, roughness: 0.85 }),
-    wood: new THREE.MeshStandardMaterial({ color: 0xffffff, map: wood, roughness: 0.55, envMapIntensity: 1.2 }),
+    wood: new THREE.MeshStandardMaterial({ color: 0xffffff, map: wood, roughness: 0.55, envMapIntensity: 0.7 }),
     // Workshop
     /* Lifted from 0x2a2d31 / 0x1b1f24. Those are the albedos of charcoal: a surface that
      * dark returns so little of what lands on it that no practical light in the room can
@@ -395,7 +417,7 @@ export function buildMaterials() {
       color: 0xffffff, map: stucco.map, bumpMap: stucco.bump, bumpScale: 0.34,
       roughness: 0.97, metalness: 0.0,
     }),
-    paintWhite: new THREE.MeshStandardMaterial({ color: 0xf5f2ea, roughness: 0.6, envMapIntensity: 1.3 }),
+    paintWhite: new THREE.MeshStandardMaterial({ color: 0xf5f2ea, roughness: 0.6, envMapIntensity: 0.66 }),
     paintCream: new THREE.MeshStandardMaterial({ color: 0xf3e6cc, roughness: 0.7 }),
     paintBrown: new THREE.MeshStandardMaterial({ color: 0x9a5f2c, roughness: 0.7 }),
     paintRed: new THREE.MeshStandardMaterial({ color: 0xa32b23, roughness: 0.55 }),

@@ -470,7 +470,13 @@ export function buildMalibu(ctx, M, handoff, lod) {
 
   // stone floor inside the glass line
   {
-    const inner = insetOutline(out0, 4.3);
+    /* 0.6 m, not 4.3. The finish floor was inset four metres from the glass line, so the
+     * whole perimeter of every room — including the spawn point, which faces the ocean —
+     * was the bare structural slab: near-white exterior plaster, indoors, in full sun. A
+     * ray cast at the floor under the player at spawn came back `#e6e2d9 roughness 0.62`,
+     * which is M.slab, not M.interiorFloor, and no amount of darkening the interior floor
+     * touched it. Floors go to the glass in this house. */
+    const inner = insetOutline(out0, 0.6);
     const sh = new THREE.Shape(inner.map(p => new THREE.Vector2(p.x, p.y)));
     // The stairwell, cut out of the finish floor as well as the structural slab. This
     // sheet is a single 125 x 78 m plane with a collider on it, so an opening in the slab

@@ -90,6 +90,31 @@ export default {
         }
         rig.root.traverse(o => { if (o.isMesh) { o.castShadow = true; o.receiveShadow = true; } });
         api.setPose('stand', true);
+
+        /* COMPILE THE ARMOUR BEFORE IT IS EVER DRAWN.
+         *
+         * An armour is ~120 meshes across five materials, and three builds a material's
+         * shader program the first time it actually renders — inside that frame. Measured:
+         * the first frame after a Mk III appeared cost 204 ms against a 7.9 ms steady
+         * state. That is the hitch at the start of every suit-up, and pre-fetching the
+         * .glb does nothing for it, because it is a GPU compile and not a download.
+         *
+         * SYNCHRONOUS compile(), not compileAsync, and the choice is deliberate. The async
+         * form resolves off a WebGL fence that a throttled or hidden tab never advances:
+         * awaiting it hung equip() outright the first time it happened, leaving the game
+         * with no suit and no error. compile() blocks, but it blocks HERE — inside the
+         * async equip, while the loading beat is already on screen — instead of on the
+         * first frame of the suit-up animation, which is the frame the player is watching.
+         */
+        // JUST THE RIG. compile(ctx.scene, ...) walks every mesh in the world — thousands
+        // of them — and synchronously compiling that during a suit-up locked the page hard
+        // enough that the harness gave up on it twice. The armour is ~120 meshes and five
+        // materials; that is the only thing here that has never been drawn before.
+        if (ctx.renderer.compile) {
+          try { ctx.renderer.compile(rig.root, ctx.camera, ctx.scene); }
+          catch (e) { /* a failed warm-up is a slow frame, not a broken game */ }
+        }
+
         ctx.state.armor = id;
         ctx.bus.emit('suit:equipped', { id, report: rig.report });
         return rig;

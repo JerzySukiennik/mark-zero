@@ -209,14 +209,20 @@ function readState(ctx, self) {
   };
 }
 
+/* ONE TRACK, AND IT IS NOT A CUE SYSTEM.
+ *
+ * There used to be three beds — house, suitup, flight — cross-faded as the state changed.
+ * Jurek picked Ramin Djawadi's "First Flight" from the Iron Man score and asked for that
+ * and nothing else, running from the moment the suit-up starts through to its own end.
+ * So this function no longer chooses anything: the track is started once, by the
+ * `suitup:start` handler, and left alone. Wandering back to a house bed when he lands
+ * would be exactly the thing he asked not to happen.
+ *
+ * Kept as a function because the update loop calls it every frame; it now only makes sure
+ * nothing else has quietly set a different cue. */
 function cueMusic(self, ctx) {
-  const s = ctx.state || {};
-  let cue = 'house';
-  if (s.mode === 'flight') cue = 'flight';
-  else if (s.mode === 'suitup' || self.suitingUp) cue = 'suitup';
-  if (cue !== self.mixer.musicCue) {
-    self.mixer.setMusic(cue, { gain: cue === 'flight' ? 0.34 : cue === 'suitup' ? 0.42 : 0.30, fade: 2.2 });
-  }
+  const cue = self.mixer.musicCue;
+  if (cue && cue !== 'first_flight') self.mixer.setMusic(null, { fade: 0.6 });
 }
 
 // ------------------------------------------------------------------------------------
@@ -316,7 +322,8 @@ function wire(ctx, self) {
     // every other file he supplied, it was never in audio/manifest.json, so the bank never
     // fetched it and every `mixer.play` naming one of them was a silent no-op.
     self.suitupVoice = mixer.play('jurek_suitup', { gain: 0.85 });
-    mixer.setMusic('suitup', { gain: 0.30, fade: 0.8 });
+    // The one piece of music in the game, from here to its own end. 187 s, not looped.
+    mixer.setMusic('first_flight', { gain: 0.55, fade: 0.4 });
   });
 
   // One servo/clank per plate. The servo rides up as the sequence gets busier so the
@@ -356,6 +363,12 @@ function wire(ctx, self) {
   // Sixteen takes supplied by Jurek, of the player walking IN an armor. Rotating through
   // them without repeating the last two is what stops a walk cycle sounding like a loop.
   bus.on('footstep', (p = {}) => {
+    /* ARMOUR ONLY. All sixteen takes are Jurek walking IN a suit — he said so himself when
+     * an earlier pass filed them as the boy's footsteps. Playing them pitched up for the
+     * un-suited boy does not make them sound like trainers, it makes a thirteen-year-old
+     * in a t-shirt clank across his own living room. There is no un-suited footstep
+     * recording in the bank, so the honest answer is silence until there is one. */
+    if (!self.armor) return;
     const n = 16;
     let i = 1 + Math.floor(Math.random() * n);
     let guard = 0;
@@ -474,7 +487,7 @@ function wire(ctx, self) {
   bus.on('restart', () => {
     self.armor = null; self.suitingUp = false;
     mixer.stopServo(0.1);
-    mixer.setMusic('house', { gain: 0.3, fade: 1.0 });
+    mixer.setMusic(null, { fade: 0.8 });        // restart: silence until the next suit-up
   });
 
   // ---- the critic's entry point -------------------------------------------------------

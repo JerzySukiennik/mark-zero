@@ -530,32 +530,12 @@
     }
   },
   "music": {
-    "house": {
-      "file": "audio/music/house.mp3",
-      "dur": 108.0,
-      "src": "dark",
-      "note": "on foot in the Malibu house and the workshop",
-      "loop": true,
-      "loopStart": 0.05,
-      "loopEnd": 107.95
-    },
-    "flight": {
-      "file": "audio/music/flight.mp3",
-      "dur": 108.0,
-      "src": "chase",
-      "note": "in the air",
-      "loop": true,
-      "loopStart": 0.05,
-      "loopEnd": 107.95
-    },
-    "suitup": {
-      "file": "audio/music/suitup.mp3",
-      "dur": 64.0,
-      "src": "boss_mode",
-      "note": "the gantry ritual",
-      "loop": true,
-      "loopStart": 0.05,
-      "loopEnd": 63.95
+    "first_flight": {
+      "file": "audio/music/first-flight.mp3",
+      "dur": 187.82,
+      "src": "Ramin Djawadi — \"First Flight\", Iron Man (2008) complete score, no SFX",
+      "note": "Chosen by Jurek as THE track. Starts on suit-up and runs to its end. Do not add other music.",
+      "loop": false
     }
   }
 }

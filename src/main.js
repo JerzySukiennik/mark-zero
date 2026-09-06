@@ -17,6 +17,7 @@
 //     and time-limited; a failure writes a visible on-screen error and the game boots
 //     without that module.
 
+import { dedupeMaterials } from './engine/dedupe.js';
 import * as THREE from 'three';
 import { createRenderer } from './engine/renderer.js';
 import { buildEnvironment } from './engine/env.js';
@@ -188,9 +189,49 @@ async function main() {
     ui.error('living-room surfacing failed — floor and ceiling stay untextured:\n' + (e && e.stack || e));
   }
 
+  /* Fold the world's duplicate materials together before anything is drawn. Run on the
+   * WORLD root only: the suit, the VFX pools and the dressing all have live owners that
+   * mutate their materials per instance. See engine/dedupe.js for what is excluded and
+   * why. */
+  try {
+    if (new URLSearchParams(location.search).has('nodedupe')) throw new Error('disabled by ?nodedupe');
+    const d = dedupeMaterials(ctx.world && ctx.world.root ? ctx.world.root : ctx.scene);
+    console.log('[MARK ZERO] materials ' + d.before + ' -> ' + d.after +
+                ' (' + d.disposed + ' copies freed across ' + d.meshes + ' meshes)');
+  } catch (e) { console.warn('[dedupe] skipped', e); }
+
   progress(1, 'ready');
   ctx.state.ready = true;
   ctx.bus.emit('ready', ctx);
+
+  /* ── two warm-ups, both aimed at the stalls Jurek can feel ──────────────────────────
+   *
+   * SHADERS. three compiles a material's program the first time it is actually drawn, and
+   * that compile happens inside the frame. Every "lag spike" that lands the first time you
+   * open a faceplate, walk into the workshop or step out of a suit is a batch of programs
+   * being built mid-frame. Measured: the first frame back in the living room after a trip
+   * to the workshop cost 95 ms against a 7-9 ms steady state. compileAsync builds them off
+   * the critical path instead.
+   *
+   * MODELS. The five armours are 5.7-8.4 MB of .glb each and were fetched only when one
+   * was chosen — which is why the suit-up "takes ages to start and you see the player
+   * standing there with the suit". This does NOT parse them or put them on the GPU (that
+   * would be 36 MB of geometry for four suits you are not wearing); it only pulls the
+   * bytes into the browser's HTTP cache, so the real load later is a parse and not a
+   * download. Deliberately serial and after a delay, so it never competes with the first
+   * frames.
+   */
+  // Not awaited anywhere, so a tab that never advances its WebGL fence just never warms.
+  if (ctx.renderer.compileAsync) {
+    ctx.renderer.compileAsync(ctx.scene, ctx.camera)
+      .then(() => console.log('[MARK ZERO] shaders warmed'))
+      .catch(() => {});
+  }
+  setTimeout(async () => {
+    for (const id of ['mk3', 'mk1', 'mk2', 'mk42', 'mk50', 'pilot']) {
+      try { await fetch('models/' + id + '.glb', { cache: 'force-cache' }); } catch (e) { /* offline is fine */ }
+    }
+  }, 2500);
 
   const loop = new Loop(ctx, MODULES);
   const MZ = installDebug(ctx, loop);

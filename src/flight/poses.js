@@ -62,6 +62,8 @@ const _eb = new Vec3();
 const _ep = new Vec3();
 const _nz = new Vec3();
 const _tmp = new Vec3();
+const _sw = new Vec3();
+const Y_AX = new Vec3(0, 1, 0);
 
 const NAMES = ['stand', 'hover', 'cruise', 'brake', 'fire', 'land'];
 
@@ -114,6 +116,7 @@ export class Poses {
     // The landing beats everything: you do not get to strike a cruise pose while you are
     // still folded over your own fist.
     if (model.landHard > 0) name = 'land';
+    else if (model.locomotion === 'walk') name = 'stand';
     else if (model.grounded && model.thrustMag < 0.1) name = 'stand';
     else if (cmd.fire) name = 'fire';
     else if (movingBackwards || retro) name = 'brake';
@@ -207,7 +210,10 @@ export class Poses {
     // backwards and the armour flies upside down.
     limitAngle(UP, uRaw, 1.745);                       // 100 degrees
     if (!this._u) this._u = new Vec3(0, 1, 0);
-    dampVec(this._u, uRaw, 0.22, dt);
+    // Walking, he stands up. There is no thrust to line the spine up with, and the coast
+    // branch would otherwise lay him along a 2 m/s ground velocity.
+    if (bodyF.locomotion === 'walk') uRaw.set(0, 1, 0);
+    dampVec(this._u, uRaw, bodyF.locomotion === 'walk' ? 0.12 : 0.22, dt);
 
     // The bank. Sideways thrust dips that side, exactly like a skier. Independent of the
     // spine direction, so it survives the body being laid down.
@@ -227,6 +233,7 @@ export class Poses {
       if (ctx.flight) { ctx.flight.pose = this.name; ctx.flight.poseParams = p; ctx.flight.poseBlend = b; }
       const suit = ctx.suit;
       const rig = suit && suit.rig;
+      this._bus = ctx.bus;
       if (rig && rig.setPoseWeights) this.drive(rig, dt, bodyF, cmd, b, p, T);
       else if (suit && suit.setPose && this._last !== name) suit.setPose(name);
       if (this._last !== name && ctx.bus) ctx.bus.emit('flight:pose', name);
@@ -385,6 +392,42 @@ export class Poses {
       // the arm keeps swinging rather than the wrist snapping to its limit.
       if (exL > 0.01) off('piv_shoulderL', X_AX, -exL * 0.6);
       if (exR > 0.01) off('piv_shoulderR', X_AX, -exR * 0.6);
+    }
+
+    /* ---- the walk cycle -------------------------------------------------------------
+     * Driven by the stride clock in flight.js, which advances with DISTANCE COVERED, so
+     * the feet stay planted whatever the speed. The swing axis comes from the direction
+     * he is actually travelling rather than from the nose, which is what makes walking
+     * sideways a side-step instead of a forward march performed crabwise.
+     */
+    if (model.locomotion === 'walk') {
+      const ph = model.walkPhase || 0;
+      const amp = clamp((model.walkSpeed || 0) / 2.2, 0, 1.4);
+      const sL = Math.sin(ph), sR = Math.sin(ph + Math.PI);
+      // Which way is he stepping, in body axes.
+      const wdir = _tmp.copy(bv);
+      wdir.y = 0;
+      const side = wdir.lengthSq() > 0.04 ? clamp(wdir.normalize().x, -1, 1) : 0;
+      const swingAx = _sw.set(side, 0, 0).lerp(X_AX, 1 - Math.abs(side)).normalize();
+
+      off('piv_hipL', swingAx, 0.45 * amp * sL);
+      off('piv_hipR', swingAx, 0.45 * amp * sR);
+      off('piv_kneeL', X_AX, -0.9 * amp * Math.pow(Math.max(0, sL), 1.2));
+      off('piv_kneeR', X_AX, -0.9 * amp * Math.pow(Math.max(0, sR), 1.2));
+      // Arms counter-swing, and the whole body rides the stride.
+      off('piv_shoulderL', swingAx, 0.25 * amp * sR);
+      off('piv_shoulderR', swingAx, 0.25 * amp * sL);
+      off('piv_chest', Y_AX, 0.06 * amp * sL);
+      rig.setRootOffset(-0.03 * amp * Math.abs(Math.sin(ph * 2)));
+
+      // One footstep per foot per cycle, on the crossing. audio/ already owns the sixteen
+      // armoured takes Jurek recorded; nothing was ever emitting this event on the ground.
+      const half = ph < Math.PI ? 0 : 1;
+      if (this._walkHalf !== half && amp > 0.15) {
+        this._walkHalf = half;
+        if (this._bus) this._bus.emit('footstep', { run: (model.walkSpeed || 0) > 3.2, speed: model.walkSpeed });
+      }
+      return;
     }
 
     // ---- the landing crouch ----------------------------------------------------------

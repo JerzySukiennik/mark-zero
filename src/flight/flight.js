@@ -174,6 +174,12 @@ export class FlightModel {
     this.contact = false;
     this.impact = 0;
     this.landHard = 0;      // 0..1 severity of the landing being played
+    this.locomotion = 'fly';
+    this.walkPhase = 0;
+    this.walkSpeed = 0;
+    this.lookPitch = 0;
+    this.liftoffT = 0;
+    this.yaw = 0;
     this._arriveSpeed = 0;
     this.landT = 0;         // seconds into it
     this.mode = 'STANDBY';
@@ -262,6 +268,59 @@ export class FlightModel {
     return coast / (1 + Math.pow(v / this.spec.rateFalloffRef, 1.3));
   }
 
+  /* One tick of walking in the armour. Deliberately NOT the flight model with the engines
+   * off: an armoured man walking is a yaw, a wish direction and a ground contact, and
+   * running it through the 6-DOF integrator only invites the airframe to lie down at 76
+   * degrees because the mains happen to be idling.
+   *
+   * `walkPhase` is the stride clock the pose controller reads; it advances with distance
+   * covered, not with time, so the feet stay planted whatever the speed. */
+  stepWalk(dt, cmd, world, power) {
+    const spec = this.spec;
+    // Yaw only. Pitch becomes a head/camera angle, so looking up does not tip the armour.
+    this.aim.yaw = clamp(this.aim.yaw + cmd.lookX, -Math.PI, Math.PI);
+    this.aim.pitch = clamp(this.aim.pitch + cmd.lookY, -Math.PI, Math.PI);
+    this.yaw = (this.yaw || 0) - clamp(this.aim.yaw * 14, -6, 6) * dt;
+    this.aim.yaw *= Math.exp(-dt / 0.06);
+    this.lookPitch = clamp((this.lookPitch || 0) - cmd.lookY * 1.0, -1.1, 0.9);
+    this.aim.pitch = 0;
+    _q.setFromAxisAngle(Y_AXIS, this.yaw);
+    this.quaternion.copy(_q);
+    this.omega.set(0, 0, 0);
+
+    // Armour is heavy. 2.2 m/s, 4.5 running — faster reads as skating, and the footstep
+    // takes Jurek supplied were cut from a walk at about two steps a second.
+    const run = cmd.boost > 0 ? 1 : 0;
+    const target = run ? 4.5 : 2.2;
+    _v.set(cmd.lateral || 0, 0, -(cmd.forward || 0));
+    if (_v.lengthSq() > 1e-6) _v.normalize().multiplyScalar(target);
+    _v.applyQuaternion(this.quaternion);
+    const k = 1 - Math.exp(-dt / 0.12);
+    this.velocity.x += (_v.x - this.velocity.x) * k;
+    this.velocity.z += (_v.z - this.velocity.z) * k;
+    this.velocity.y -= G * dt;
+
+    this.position.addScaledVector(this.velocity, dt);
+    this.resolveGround(world, dt);   // (world, dt) — not the other way round
+    this.resolveSolids(dt);
+
+    // The stride clock: one full cycle per 1.4 m covered.
+    const sp = Math.hypot(this.velocity.x, this.velocity.z);
+    this.walkSpeed = sp;
+    this.walkPhase = ((this.walkPhase || 0) + (sp / 1.4) * Math.PI * 2 * dt) % (Math.PI * 2);
+
+    this.speed = sp;
+    this.thrustMag = 0;
+    this.throttle = 0;
+    this.mode = 'GROUND';
+    this.gForce = 1;
+    this.accel.set(0, 0, 0);
+    this.aoa = 0;
+    this.boostActive = 0;
+    this.updateSystems(dt, cmd, 1);   // standing in the armour recharges the reactor
+    return;
+  }
+
   // -------------------------------------------------------------------------------------
   step(dt, cmd, world) {
     const spec = this.spec;
@@ -273,6 +332,41 @@ export class FlightModel {
     // ---- 1. ROTATION -------------------------------------------------------------------
     const auth = this.authority() * (0.35 + 0.65 * power);
     const maxRate = spec.maxRate * auth;
+
+    /* ═══ GROUND MODE ═══════════════════════════════════════════════════════════════
+     *
+     * "When the suit touches the ground let me WALK in it — only after Space do you lift
+     * off." There was no ground locomotion at all: the airframe ran every tick, so W on
+     * the terrace fired 13.4 kN of mains and skidded the armour across the slab.
+     *
+     * Walking is not flying with the thrusters off, so it does not go through the flight
+     * integrator. Yaw-only steering, a velocity that chases the walk wish directly,
+     * gravity, and the same resolveGround as everything else. Space is the only way out.
+     */
+    const wantWalk = this.contact && this.velocity.lengthSq() < 9 &&
+                     (cmd.vertical || 0) <= 0 && this.landHard <= 0;
+    if (this.locomotion === 'walk') {
+      if ((cmd.vertical || 0) > 0.05) {
+        // LIFT OFF. A real kick, so leaving the ground is an event and not a drift.
+        this.locomotion = 'fly';
+        this.velocity.y = 7;
+        this.liftoffT = 0.25;
+        this.hoverHold = false;
+      } else if (!this.contact) {
+        // Walked off an edge. Fall — he can catch himself with Space on the way down.
+        this._airT = (this._airT || 0) + dt;
+        if (this._airT > 0.15) { this.locomotion = 'fly'; this._airT = 0; }
+      } else {
+        this._airT = 0;
+        return this.stepWalk(dt, cmd, world, power);
+      }
+    } else if (wantWalk && this.speed < 3) {
+      this.locomotion = 'walk';
+      this.hover = false;
+      this.hoverHold = false;
+      return this.stepWalk(dt, cmd, world, power);
+    }
+    if (this.liftoffT > 0) this.liftoffT = Math.max(0, this.liftoffT - dt);
 
     // The aim buffer: mouse motion is a debt of rotation, spent at the airframe's pace.
     // Clamped to half a turn: a big mouse sweep can command a full flip, but nothing
@@ -481,6 +575,7 @@ export class FlightModel {
 
     this.updateSystems(dt, cmd, boost);
     this.resolveGround(world, dt);
+    this.resolveSolids(dt);
     this.updateThrusterMix(cmd, power);
     this.updateMode();
   }
@@ -590,6 +685,56 @@ export class FlightModel {
   }
 
   // -------------------------------------------------------------------------------------
+  /* WALLS. The flight model only ever collided with the TERRAIN — `surfaceHeight` and
+   * nothing else — so the armour flew straight through the house and through every
+   * building in the town. Jurek found both.
+   *
+   * A ball sweep along this tick's travel, against the same Rapier colliders the walker
+   * uses, is enough: on a hit, put the suit at the contact point and remove the component
+   * of velocity going INTO the surface, so you slide along a wall instead of stopping dead
+   * against it. Openings have no collider, so flying in through the terrace still works —
+   * which matters, because getting back into the house is a thing he asked for.
+   *
+   * Skipped below 2 cm of travel per tick, which only means "not moving". The first cut
+   * used half a metre — at a 1/120 s tick that is SIXTY METRES PER SECOND, so the whole
+   * test silently did nothing below cruising speed and a suit could still drift through a
+   * wall at 25 m/s. Measured: flying at 25 m/s straight at a town wall known to be at
+   * x = 1742.8 passed clean through it and came out at 1858. */
+  resolveSolids(dt) {
+    const ph = this.physics;
+    if (!ph || !ph.shapeCast) return;
+    _v.copy(this.position).sub(this._prevPos || (this._prevPos = this.position.clone()));
+    const dist = _v.length();
+    if (dist < 0.02) { this._prevPos.copy(this.position); return; }
+    _v.divideScalar(dist);
+    const hit = ph.shapeCast(this._prevPos, _v, 0.9, dist);
+    /* Two guards, and without them this locks the suit in place.
+     *
+     * castShape is called with stop_at_penetration, so a sweep that STARTS overlapping a
+     * collider comes back with a time of impact of zero and the start point as the hit.
+     * Repositioning to that point puts the suit back where it began, the next tick starts
+     * from the same overlap, and the armour is pinned: measured, flying at 25 m/s in open
+     * air 8 m above the town, x never left 1730.0 across 200 ticks.
+     *
+     * So: ignore a hit with no approach in it (distance ~ 0), and ignore any surface whose
+     * normal is not actually facing the way we came from — a wall you are flying INTO has
+     * a normal opposing the travel direction, and anything else is a graze or a surface
+     * behind us. */
+    if (hit && hit.point && hit.normal &&
+        hit.distance > 0.05 && (hit.normal.x * _v.x + hit.normal.y * _v.y + hit.normal.z * _v.z) < -0.1) {
+      // Sit on the surface, a hair clear of it.
+      this.position.copy(hit.point).addScaledVector(hit.normal, 0.95);
+      const into = this.velocity.dot(hit.normal);
+      if (into < 0) {
+        this.velocity.addScaledVector(hit.normal, -into);
+        // Hitting a wall at speed is an impact like any other.
+        if (-into > 6) this.impact = Math.max(this.impact, -into);
+      }
+      this.contact = true;
+    }
+    this._prevPos.copy(this.position);
+  }
+
   resolveGround(world, dt) {
     this.impact = 0;
     const wasGrounded = this.grounded;
@@ -610,6 +755,11 @@ export class FlightModel {
      * a body-length below the reported surface is indoors, not falling through terrain:
      * leave it alone and let the room's own colliders do the work until it climbs out. */
     if (this.position.y < floor - 2.2) return;
+    /* A suit standing still on the floor sits at EXACTLY `floor`, and `y < floor` is false
+     * there — so resting on the ground reported no contact at all, and the walk mode above
+     * would have kept deciding it had just walked off an edge. Two centimetres of
+     * tolerance: still resting counts as still touching. */
+    if (this.position.y <= floor + 0.02) this.contact = true;
     if (this.position.y < floor) {
       this.contact = true;
       const into = -this.velocity.y;
@@ -876,6 +1026,7 @@ export default {
     api.lastFreeLookY = cmd.freeLookY;
     api.cmd = cmd;
 
+    model.physics = ctx.physics;      // resolveSolids sweeps against the real colliders
     model.step(dt, cmd, ctx.world);
 
     if (model.impact > 4) ctx.bus.emit('impact', { force: model.impact, point: model.position.clone() });

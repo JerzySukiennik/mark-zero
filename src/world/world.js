@@ -411,6 +411,8 @@ export default {
         l.removeFromParent();
       }
     }
+    this._reapDarkLights(ctx);
+
     for (const r of recs) r._d = r.pos.distanceToSquared(camPos);
     recs.sort((a, b) => a._d - b._d);
     for (let i = 0; i < pool.length; i++) {
@@ -424,6 +426,45 @@ export default {
       const d = Math.sqrt(r._d);
       const reach = r.distance > 0 ? r.distance : 40;
       l.intensity = r.intensity * (d > reach * 1.6 ? 0 : 1);
+    }
+  },
+
+  /* A LIGHT AT ZERO INTENSITY IS NOT A FREE LIGHT.
+   *
+   * three's forward renderer compiles the light COUNT into every material's shader and
+   * evaluates every one of them per fragment. A spotlight turned down to zero still costs
+   * a full lighting term on all 1000-odd materials in the scene, for a contribution of
+   * exactly nothing. Measured live: 19 lights in the scene, EIGHT of them at intensity 0 —
+   * the three suit-up stage spots and five of the indoor-daylight set, all of which spend
+   * most of the game switched off.
+   *
+   * So they come out of the graph entirely and go back the moment their owner turns them
+   * up again. Their owners keep their own references and go on setting `intensity` on the
+   * detached object, so nothing else has to know this is happening. The pooled point
+   * lights above are excluded — they have their own manager. */
+  _reapDarkLights(ctx) {
+    if (!ctx || !ctx.scene) return;
+    const dark = this._dark || (this._dark = []);
+    for (let i = dark.length - 1; i >= 0; i--) {
+      const e = dark[i];
+      if (e.light.intensity > 0.001) {
+        e.parent.add(e.light);
+        e.light.userData.reaped = false;
+        dark.splice(i, 1);
+      }
+    }
+    this._reapT = (this._reapT || 0) + 1;
+    if (this._reapT % 30 !== 0) return;
+    const found = [];
+    ctx.scene.traverse(o => {
+      if (!o.isLight || o.userData.poolLight || o.userData.pooledAway) return;
+      if (o.isHemisphereLight) return;             // one uniform, and it is always on
+      if (o.intensity <= 0.001 && o.parent) found.push(o);
+    });
+    for (const l of found) {
+      dark.push({ light: l, parent: l.parent });
+      l.userData.reaped = true;
+      l.removeFromParent();
     }
   },
 

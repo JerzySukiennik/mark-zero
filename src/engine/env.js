@@ -46,7 +46,7 @@ function gradientEnv(renderer, stops, sun) {
 // The two ends of the mix. Anything a module wants to fade with the descent goes here.
 const PRESETS = {
   exterior: {
-    sun: 2.3, bounce: 0.62, exposure: 0.92, envInt: 1.0,
+    sun: 1.95, bounce: 0.48, exposure: 0.84, envInt: 0.85,
     bg: 0x9dc0e0, fog: 0xb8cbdd, fogNear: 900, fogFar: 14000,
     bounceSky: 0xbfd8f5, bounceGround: 0x8a6a48, bloom: 0.55,
   },
