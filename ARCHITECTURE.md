@@ -587,3 +587,18 @@ Verified end to end in `tools/doff-probe.html`:
     doff: floating-head frames 0/40, parked=true, armour still visible=true
     boy stepped out 1.25 m from the armour, mode=onfoot
     re-entry: armor=mk3, closed=true, parked=false, mode=flight
+
+### The armour tablet
+
+Walking to each glass case in turn and holding F on it is fine once you know which suit you
+want. A workshop with five of them would have a slate on a stand, and that is what was
+asked for, so there is one by the rack at (-14.6, 91, 17.4).
+
+It is deliberately not a second selection system. Holding F on it opens `ui.picker`, which
+takes the pointer the way the pause screen does, answers 1-5 and clicks, and hands back an
+armour id — and from there it runs the ordinary flow: walk to the pad, gantry, suit-up. One
+code path decides "which armour" however you asked for it, so the cases and the tablet can
+never drift apart.
+
+Verified in `tools/tablet-probe.html`: mesh built, `world.tabletAt` exposed, holding F opens
+the picker with 5 rows, and picking #5 sets `state.armor = mk50` and closes it.

@@ -600,6 +600,50 @@ export default {
         }
       }
 
+      /* ------------- the tablet -------------------------------------------
+       * Same hold-F as a display case, but it opens the picker instead of choosing the
+       * one suit you happen to be standing at. Picking from it runs the ordinary
+       * selection flow — walk to the pad, gantry, suit-up — so there is one code path
+       * for "which armour" no matter how you asked. */
+      const tablet = ctx.world && ctx.world.tabletAt;
+      if (tablet && !chosen && !(ctx.ui && ctx.ui.pickerOpen)) {
+        const dt2 = Math.hypot(P.pos.x - tablet.x, P.pos.z - tablet.z);
+        if (dt2 < 2.2 && Math.abs(P.pos.y - tablet.y) < 2.6) {
+          const holding = input && input.action('interact') && !st.paused;
+          if (holding) {
+            hold = Math.min(HOLD_TIME, hold + dt);
+            if (hold >= HOLD_TIME) {
+              hold = 0;
+              if (ctx.ui) {
+                ctx.ui.prompt(null);
+                if (ctx.input && ctx.input.releaseLock) ctx.input.releaseLock(0);
+                ctx.ui.picker(ARMORS.map(a => ({
+                  id: a.id, name: a.name, sub: a.sub,
+                  tint: ('000000' + a.tint.toString(16)).slice(-6),
+                })), (id) => {
+                  const c2 = cases.find(c => c.id === id);
+                  if (ctx.input && ctx.input.requestLock) ctx.input.requestLock();
+                  if (!c2) return;
+                  chosen = c2;
+                  st.armor = id;
+                  if (c2.gantry) {
+                    approach = 0; approachStall = 0; approachSide = 0; approachIdx = 0;
+                    approachPath = planApproach(P.pos, c2.gantry);
+                    ctx.ui.say('STEP ONTO THE PLATFORM, SIR.');
+                  } else startSuitup(c2);
+                });
+              }
+              return;
+            }
+          } else hold = Math.max(0, hold - dt * 2.2);
+          if (ctx.ui) {
+            ctx.ui.prompt({ name: 'ARMOUR TABLET', sub: 'SELECT A MARK', key: 'F',
+                            progress: hold / HOLD_TIME });
+          }
+          return;
+        }
+      }
+
       // ------------- step back into a parked suit ---------------------------
       // An armour you climbed out of stands where you left it (suit/suitup.js). It is not
       // one of the display cases, so pickCase never sees it; it gets its own prompt.

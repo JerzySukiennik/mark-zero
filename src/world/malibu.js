@@ -1504,6 +1504,37 @@ export function buildMalibu(ctx, M, handoff, lod) {
     shop.add(gantry);
   }
 
+  /* ═══════════════ THE TABLET ═══════════════
+   * A slate on a stand by the armour rack. Walking to each glass case in turn and holding
+   * F on it is fine when you know which suit you want; the tablet is what a workshop with
+   * five of them would actually have, and it is what Jurek asked for.
+   * onfoot/ owns the interaction — this is only the object and the marker on it.
+   */
+  {
+    const g = new THREE.Group();
+    g.name = 'suit_tablet';
+    const post = new THREE.Mesh(new THREE.CylinderGeometry(0.05, 0.07, 1.05, 12), M.shopDark);
+    post.position.y = 0.52; g.add(post);
+    const foot = new THREE.Mesh(new THREE.CylinderGeometry(0.26, 0.30, 0.05, 20), M.shopDark);
+    foot.position.y = 0.03; g.add(foot);
+    const slate = new THREE.Mesh(new THREE.BoxGeometry(0.46, 0.32, 0.022), M.shopDark);
+    slate.position.set(0, 1.12, 0); slate.rotation.x = -0.42; g.add(slate);
+    const screen = new THREE.Mesh(new THREE.PlaneGeometry(0.42, 0.28),
+      new THREE.MeshBasicMaterial({ color: 0x7fd4f5, toneMapped: false, fog: false }));
+    screen.position.set(0, 1.117, 0.013); screen.rotation.x = -0.42;
+    screen.position.y += 0.004; screen.position.z += 0.005;
+    g.add(screen);
+    const glow = new THREE.PointLight(0x7fd4f5, 0.55, 3.2, 2);
+    glow.position.set(0, 1.2, 0.18); g.add(glow);
+    // In the bay, facing the rack, a step off the route to the gantry pad.
+    g.position.set(-14.6, SHOP_FLOOR, 17.4);
+    g.rotation.y = -0.9;
+    g.traverse(o => { if (o.isMesh) o.castShadow = true; });
+    shop.add(g);
+    handoff.solid(post, { kind: 'prop' });
+    shop.userData.tablet = new THREE.Vector3(-14.6, SHOP_FLOOR + 1.1, 17.4);
+  }
+
   /* ═══════════════ THE LAUNCH TUNNEL ═══════════════
    *
    * "You cannot fly into the house at all, to take the suit off and put a new one on" —
@@ -1608,6 +1639,7 @@ export function buildMalibu(ctx, M, handoff, lod) {
     root, interior, shop, glassPanels, gantry,
     armorStands,
     gantryPoint: { x: -6, y: SHOP_FLOOR, z: 14 },
+    tabletAt: { x: -14.6, y: SHOP_FLOOR + 1.1, z: 17.4 },
     stairTop,
     update(dt, t) {
       applyLights();

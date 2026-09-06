@@ -317,6 +317,18 @@ function installShell(ctx, loop, ui) {
 
   addEventListener('keydown', e => {
     if (e.metaKey || e.ctrlKey) return;
+    // The armour picker owns the keyboard while it is open.
+    if (ui.pickerOpen) {
+      if (e.code === 'Escape') {
+        e.preventDefault();
+        ui.pickerClose();
+        input.requestLock();
+        return;
+      }
+      const n = /^Digit([1-9])$/.exec(e.code);
+      if (n && ui.pickerKey(+n[1])) { e.preventDefault(); return; }
+      return;
+    }
     if (e.code === 'Escape') {
       e.preventDefault();
       if (ui.legendOpen) { ui.showLegend(false); if (!ctx.state.paused) input.requestLock(); return; }

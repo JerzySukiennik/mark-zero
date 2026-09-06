@@ -216,6 +216,8 @@ export default {
 
     const world = {
       root, terrain, ocean, sky, malibu, town, fair, donut, materials: M, lod,
+      // Where the armour tablet stands, so onfoot/ can offer it without a scene search.
+      tabletAt: malibu ? malibu.tabletAt : null,
       vegetation: { close: vegClose, near: vegNear, far: vegFar },
 
       /**

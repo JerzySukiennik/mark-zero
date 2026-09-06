@@ -56,6 +56,26 @@ const CSS = `
 #ui-legend{position:absolute;inset:0;display:none;align-items:center;justify-content:center;
   background:rgba(3,8,11,.82);backdrop-filter:blur(3px);pointer-events:auto}
 #ui-legend.on{display:flex}
+/* The armour picker. Same furniture as the legend so it reads as one interface. */
+#ui-pick{position:absolute;inset:0;display:none;align-items:center;justify-content:center;
+  background:rgba(3,8,11,.86);backdrop-filter:blur(3px);pointer-events:auto;z-index:6}
+#ui-pick.on{display:flex}
+#ui-pick .panel{width:min(560px,90vw);border:1px solid rgba(120,200,230,.22);
+  padding:26px 30px 20px;background:rgba(6,14,19,.78)}
+#ui-pick h2{margin:0 0 4px;font-size:11px;font-weight:400;letter-spacing:.62em;color:#8fd8f0}
+#ui-pick .sub{margin:0 0 18px;font-size:9px;letter-spacing:.3em;color:rgba(190,225,240,.5)}
+#ui-pick .item{display:flex;align-items:center;gap:14px;padding:9px 10px;cursor:pointer;
+  border:1px solid transparent;border-bottom:1px dotted rgba(120,180,205,.16)}
+#ui-pick .item:hover,#ui-pick .item.sel{border-color:rgba(150,215,240,.45);
+  background:rgba(30,80,100,.28)}
+#ui-pick .item .k{font-size:10px;letter-spacing:.2em;color:#dff2fb;
+  border:1px solid rgba(150,215,240,.3);padding:2px 7px}
+#ui-pick .item .sw{width:16px;height:16px;border:1px solid rgba(255,255,255,.25);flex:0 0 auto}
+#ui-pick .item .nm{font-size:12px;letter-spacing:.26em;color:#eaf6fb}
+#ui-pick .item .ds{margin-left:auto;font-size:9px;letter-spacing:.22em;
+  color:rgba(190,225,240,.55)}
+#ui-pick .foot{margin-top:14px;font-size:9px;letter-spacing:.3em;
+  color:rgba(190,225,240,.45);text-align:center}
 #ui-legend .panel{width:min(680px,88vw);border:1px solid rgba(120,200,230,.22);
   padding:30px 38px 26px;background:rgba(6,14,19,.72);position:relative}
 #ui-legend h2{margin:0 0 22px;font-size:11px;font-weight:400;letter-spacing:.62em;
@@ -180,6 +200,12 @@ export function createUI(ctx) {
       <h2>CONTROLS</h2><div class="cols"></div>
       <div class="foot">PRESS ? OR ESC TO CLOSE</div>
     </div></div>
+    <div id="ui-pick"><div class="panel">
+      <h2>ARMOUR</h2>
+      <div class="sub">JARVIS &nbsp;·&nbsp; SELECT A MARK</div>
+      <div class="list"></div>
+      <div class="foot">1-5 OR CLICK &nbsp;·&nbsp; ESC TO CANCEL</div>
+    </div></div>
     <div id="ui-pause">
       <h1>PAUSED</h1>
       <button data-act="resume">Resume</button>
@@ -215,6 +241,7 @@ export function createUI(ctx) {
   const linesEl = $('#ui-lines');
   const legendEl = $('#ui-legend');
   const pauseEl = $('#ui-pause');
+  const pickEl = $('#ui-pick');
   const errEl = $('#ui-err');
   const errBody = errEl.querySelector('.body');
   const reticle = $('#ui-reticle');
@@ -323,6 +350,46 @@ export function createUI(ctx) {
       pauseEl.classList.toggle('on', v);
       if (v) legendEl.classList.remove('on');
     },
+
+    /* THE TABLET'S SCREEN.
+     * Jurek asked to pick an armour off a tablet rather than by walking up to each glass
+     * case in turn and holding F on it. The cases still work — this is the shortcut, and
+     * it is what a workshop with five suits in it would actually have.
+     *
+     * Deliberately not a new input system: it takes the pointer while it is open (the
+     * shell releases pointer lock for it, exactly like the pause screen), answers 1-5 and
+     * clicks, and hands back an id. Everything downstream is the existing selection flow.
+     */
+    picker(items, onPick) {
+      const list = pickEl.querySelector('.list');
+      list.textContent = '';
+      items.forEach((it, i) => {
+        const row = document.createElement('div');
+        row.className = 'item';
+        row.innerHTML = '<span class="k">' + (i + 1) + '</span>' +
+          '<span class="sw" style="background:#' + it.tint + '"></span>' +
+          '<span class="nm"></span><span class="ds"></span>';
+        row.querySelector('.nm').textContent = it.name;
+        row.querySelector('.ds').textContent = it.sub || '';
+        row.addEventListener('click', () => { ui.pickerClose(); onPick(it.id); });
+        list.appendChild(row);
+      });
+      pickEl._items = items;
+      pickEl._onPick = onPick;
+      pickEl.classList.add('on');
+      ui.pickerOpen = true;
+    },
+    pickerClose() { pickEl.classList.remove('on'); ui.pickerOpen = false; },
+    pickerKey(n) {
+      if (!ui.pickerOpen) return false;
+      const it = pickEl._items && pickEl._items[n - 1];
+      if (!it) return false;
+      const fn = pickEl._onPick;
+      ui.pickerClose();
+      if (fn) fn(it.id);
+      return true;
+    },
+    pickerOpen: false,
 
     fade(v, seconds = 0.5) {
       fadeEl.style.transitionDuration = seconds + 's';
