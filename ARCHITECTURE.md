@@ -538,3 +538,29 @@ they follow the pose for free, scaled from zero so they cost one matrix each whe
 Deploy is slower than retract (0.18 s against 0.09 s): growing reads as something being
 built, snapping back as something being dismissed. Verified: built 2 on the Mk L and 0 on
 the Mk III, out to 1.0 while held, back to 0.0 on release.
+
+### The launch tunnel
+
+There was no way in or out of the workshop except the stairs, which is why "you can't fly
+into the house at all, to take the suit off and put a new one on" had no answer.
+
+The bay is a basement at y = 91 under a plateau at 96, and the cliff falls away to the
+SOUTH — measured on the live terrain, the ground is still 96 m at z = −27 and already 29 m
+at z = −47, a 67 m face over twenty metres of run. That face is where the door belongs.
+
+The bore is a `CatmullRomCurve3` through six points: out of the bay heading south, swinging
+west as it descends, breaking out of the cliff pointing at open sea so you leave already
+banked and pull up over the water. Curved because a straight one reads as a drainpipe.
+3.2 m of bore, because the flight model now sweeps a 0.9 m ball against real colliders and
+anything under ~2.5 m is a tunnel you scrape down rather than fly through.
+
+**No hole had to be cut in the terrain.** `resolveGround` ignores the heightfield once you
+are more than 2.2 m below the reported surface — the "under a floor" rule that lets the
+workshop exist at all — so the run under the plateau is already flyable, and only the mouth
+has to clear the rock.
+
+Verified in `tools/tunnel-probe.html`:
+
+    bore clear?      0 of 40 segments blocked to a 0.9 m sweep along the centre-line
+    bore vs terrain  32 points under the surface, 9 in open air, breaks out at t = 0.80
+    mouth            (-42, 86, -44), terrain there 45 m -> OPEN AIR

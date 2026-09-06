@@ -1504,6 +1504,75 @@ export function buildMalibu(ctx, M, handoff, lod) {
     shop.add(gantry);
   }
 
+  /* ═══════════════ THE LAUNCH TUNNEL ═══════════════
+   *
+   * "You cannot fly into the house at all, to take the suit off and put a new one on" —
+   * and there was no way out of the workshop either except walking back up the stairs.
+   * The armour bay is a basement at y = 91 under a plateau at 96, and the cliff falls away
+   * to the SOUTH: measured on the live terrain, the ground is still 96 m at z = -27 and
+   * already 29 m at z = -47, so there is a 67 m face over twenty metres of run right there.
+   * That face is the natural place for a door.
+   *
+   * A curved bore, because Jurek asked for one that turns: it leaves the bay heading south,
+   * swings west as it descends, and breaks out of the cliff pointing at the open sea, so
+   * you come out already banked and pull up over the water. Straight would have been easier
+   * and would have read as a drainpipe.
+   *
+   * Why it needs no hole cut in the terrain: `resolveGround` ignores the heightfield
+   * entirely once you are more than 2.2 m below the reported surface (the "under a floor"
+   * rule that lets the workshop exist at all), so the run under the plateau is already
+   * flyable. Only the mouth has to clear the rock, and it does — the last control point
+   * sits out past where the face has fallen below the bore.
+   */
+  {
+    const path = new THREE.CatmullRomCurve3([
+      new THREE.Vector3(-19.6, SHOP_FLOOR + 2.2, 9),     // the bay, facing out
+      new THREE.Vector3(-20.5, SHOP_FLOOR + 2.2, -3),
+      new THREE.Vector3(-23.0, SHOP_FLOOR + 1.6, -15),
+      new THREE.Vector3(-27.0, SHOP_FLOOR + 0.2, -25),
+      new THREE.Vector3(-33.0, SHOP_FLOOR - 2.0, -34),   // out through the face
+      new THREE.Vector3(-42.0, SHOP_FLOOR - 5.0, -44),   // clear air over the sea
+    ]);
+    // 3.2 m of bore. The flight model sweeps a 0.9 m ball against real colliders now
+    // (flight.js resolveSolids), so anything tighter than about 2.5 m is a tunnel you
+    // scrape down rather than fly through.
+    const BORE = 3.2;
+    const tube = new THREE.Mesh(
+      new THREE.TubeGeometry(path, 90, BORE, 20, false),
+      new THREE.MeshStandardMaterial({
+        color: 0x2b2f33, roughness: 0.95, metalness: 0.05, envMapIntensity: 0.35,
+        side: THREE.BackSide,             // you are always inside it
+        bumpMap: M._textures && M._textures.rock ? M._textures.rock : null, bumpScale: 0.5,
+      })
+    );
+    tube.name = 'launch_tunnel';
+    tube.receiveShadow = true;
+    shop.add(tube);
+    // Solid walls, open bore: a trimesh of the shell is exactly that.
+    handoff.solid(tube, { kind: 'tunnel' });
+
+    // Strip lights down the bore, so it reads as a built thing and you can see the turn.
+    for (let i = 1; i < 9; i++) {
+      const t = i / 9;
+      const p = path.getPointAt(t);
+      const ring = new THREE.Mesh(
+        new THREE.TorusGeometry(BORE - 0.06, 0.05, 6, 24),
+        new THREE.MeshBasicMaterial({ color: 0x8fd8ff, toneMapped: false, fog: false })
+      );
+      ring.position.copy(p);
+      const tan = path.getTangentAt(t);
+      ring.lookAt(p.clone().add(tan));
+      shop.add(ring);
+    }
+    // The one light that says "this way out", at the mouth.
+    const mouthGlow = new THREE.PointLight(0x9fd6ff, 2.2, 26, 2);
+    mouthGlow.position.copy(path.getPointAt(0.86));
+    shop.add(mouthGlow);
+
+    // Where the exit is, for anything that wants to point at it.
+    shop.userData.tunnelMouth = path.getPointAt(1).clone();
+  }
+
   root.add(shop);
 
   /* ── the practical lights ──
