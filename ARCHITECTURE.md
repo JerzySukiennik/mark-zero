@@ -840,3 +840,35 @@ across, and splitting it spatially would only make batches nobody can cull separ
 
 **The general lesson: fewer, bigger batches is not automatically better.** Past the point
 where a batch stops fitting in a frustum test, it is worse.
+
+## tools/regression.html — the end-to-end check
+
+One headless run that plays the game from boot to collision: 29 assertions covering the
+world build, walking, the tablet, wearing all five armours, thrust / boost / exhaust
+direction / braking / backwards flight / falling / hover, landing into ground mode, doffing,
+walking back in with F, the launch tunnel bore, the audio bank and building collision. It
+also counts console errors, because `engine/loop.js` swallows module-update exceptions and a
+broken subsystem otherwise reads as a vague gameplay complaint.
+
+Run it after anything structural:
+
+    python3 tools/recv.py 8802 shots/reg &
+    "…/Google Chrome" --headless=new --enable-unsafe-swiftshader --use-angle=swiftshader \
+      --user-data-dir=/tmp/mz-reg http://localhost:8770/tools/regression.html
+
+Two things it taught immediately.
+
+**It found five uncaught errors a session.** `compileAsync` on a freshly equipped rig threw
+`TypeError: Cannot read properties of undefined (reading 'isReady')` from inside three's own
+program-ready polling — once per armour worn. The throw happens in three's rAF callback, so
+the `.catch()` on the promise never sees it and nothing in the game noticed. That warm-up is
+gone; it was the third attempt at the same idea and, like the other two, was never measured
+to help. The scene-wide `compileAsync` at boot stays, because that one is measured (95 ms to
+10.3 ms) and does not throw.
+
+**Two of its own failures were the test, not the game.** `MZ.fly()` calls `activate()`, which
+resets the model onto the world spawn — a position written in the same breath is overwritten
+by the ticks that follow, so the ground-mode test was reading y = 108 when it had asked for
+97.4 and blaming the game. And the F-hold re-entry check is timing-sensitive: it failed once
+and passed on a re-run with identical code. Both are noted here rather than papered over — a
+suite that cries wolf is worse than no suite.

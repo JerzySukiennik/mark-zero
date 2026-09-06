@@ -91,30 +91,25 @@ export default {
         rig.root.traverse(o => { if (o.isMesh) { o.castShadow = true; o.receiveShadow = true; } });
         api.setPose('stand', true);
 
-        /* WARM THE ARMOUR'S SHADERS, BUT NEVER WAIT FOR IT.
+        /* NO PER-ARMOUR SHADER WARM-UP. Three ways of doing it were tried and all three
+         * were worse than the hitch they were meant to remove:
          *
-         * An armour is ~120 meshes and three builds a material's program the first time it
-         * actually renders, inside that frame — so the first frame of a suit-up pays for
-         * all of it at once. Warming it up here is the right idea and both obvious ways of
-         * doing it are traps, so this is deliberately the timid version:
+         *   await compileAsync(...)   hung equip() outright — it resolves off a WebGL fence
+         *                             that a hidden or throttled tab never advances, so the
+         *                             game was left with no suit and no error.
+         *   compile(rig.root, ...)    blocks; under a software rasteriser the rig never
+         *                             appeared inside a twenty-second wait.
+         *   compileAsync fire-and-forget   threw an UNCAUGHT TypeError from inside three's
+         *                             own program-ready polling (three.module.js
+         *                             `program.isReady()`), once per armour worn — five in
+         *                             a single regression run. The throw is inside three's
+         *                             rAF callback, so the .catch() on the promise never
+         *                             sees it.
          *
-         *   await compileAsync(...)   HUNG equip() outright. It resolves off a WebGL fence
-         *                             that a hidden or throttled tab never advances: no
-         *                             suit, no error, a dead game.
-         *   compile(rig.root, ...)    Blocks. Measured under a software rasteriser, the
-         *                             rig never appeared at all inside a twenty-second
-         *                             wait — a stall far worse than the hitch it was
-         *                             meant to remove, and exactly what a weak GPU would
-         *                             do to a player.
-         *
-         * Fire and forget. If it finishes before the first frame the hitch is gone; if it
-         * does not, the frame pays for it as it always did. Nothing can be made worse by a
-         * warm-up nobody waits on.
+         * The scene-wide compileAsync at boot (main.js) stays: that one is measured — the
+         * first frame back in the living room after a workshop trip went 95 ms to 10.3 ms —
+         * and it does not throw. Nothing here was ever measured to help.
          */
-        if (ctx.renderer.compileAsync) {
-          try { ctx.renderer.compileAsync(rig.root, ctx.camera, ctx.scene).catch(() => {}); }
-          catch (e) { /* a failed warm-up is a slow frame, not a broken game */ }
-        }
 
         ctx.state.armor = id;
         ctx.bus.emit('suit:equipped', { id, report: rig.report });
