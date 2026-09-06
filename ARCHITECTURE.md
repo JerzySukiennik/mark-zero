@@ -872,3 +872,43 @@ by the ticks that follow, so the ground-mode test was reading y = 108 when it ha
 97.4 and blaming the game. And the F-hold re-entry check is timing-sensitive: it failed once
 and passed on a re-run with identical code. Both are noted here rather than papered over — a
 suite that cries wolf is worse than no suite.
+
+## The models: 37.5 MB of geometry down to 18.2 MB
+
+The five armours were raw float32 glTF and the first suit-up waits on one of them. The
+Mk III alone was 8 MB — 117 024 triangles across 227 264 vertices, because hard edges split
+most of them (welding was tried and buys nothing: 8.36 MB in, 8.41 MB out).
+
+`EXT_meshopt_compression` is what the vendored `GLTFLoader` already understands; it only
+ever lacked the 25 KB decoder, now vendored beside three itself and registered in
+`engine/assets.js`. Nothing else in the pipeline changes.
+
+    mk1  7.55 -> 2.96 MB     mk2  8.14 -> 2.98     mk3  8.36 -> 3.03
+    mk42 6.87 -> 3.78 MB     mk50 5.70 -> 3.18     pilot 2.75 -> 2.14
+    total 37.5 MB -> 18.2 MB   (51% smaller)
+
+Originals are kept in `models/.orig/` — that is the source the compression is re-run from,
+not a backup to restore.
+
+### Two bugs the compression exposed
+
+**Merged attributes have to be one type, not just one name.** Meshopt hands back quantized
+attributes — UVs as normalized `Uint16`, normals as `Int8` — and `mergeGeometries` refuses a
+group whose members disagree: *"BufferAttribute.array must be of consistent array types"*.
+Twenty of those a run, each one a batch that silently did not happen and a pile of draw
+calls quietly coming back. `normalise()` now reads every attribute through `getX/getY/getZ`,
+which dequantizes normalized integers and flattens interleaved buffers on the way out, so
+what it emits is always plain float32 and always mergeable.
+
+**`ctx.state.armor` had two owners and they disagreed.** `onfoot`'s `debug:wear` handler set
+it the instant the event fired — eight megabytes before there is any armour — while
+`suit.equip()` set it when the model actually landed. A regression run that wore all five
+Marks and then explicitly wore the Mk III finished with `state.armor = 'mk50'` and
+`suit.rig.id = 'mk3'`.
+
+That is not cosmetic. The parked-shell prompt reads its name from it, re-entering an armour
+restores that id, and `flight/` looks up thrust, mass and top speed in `ARMOR_SPECS` by it —
+so a Mk III would have been flying on the Mk L's numbers. suit/ is the only writer now, and
+`equip()` also writes it on the already-worn early return so it can never go stale.
+`equip()` additionally carries a request token: two overlapping loads (pick a Mark, change
+your mind) no longer let whichever finishes second install itself.

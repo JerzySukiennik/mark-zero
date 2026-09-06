@@ -272,7 +272,20 @@ export default {
     // side owns leaving on-foot mode and remembering which one you took.
     ctx.bus.on('debug:wear', id => {
       if (!id) return;
-      ctx.state.armor = id; ctx.state.mode = 'flight'; ctx.state.suitClosed = true;
+      /* NOT `ctx.state.armor = id`. That is suit/'s to write, and it writes it when the
+       * model has actually landed — this handler runs the instant the event is emitted,
+       * eight megabytes before there is any armour.
+       *
+       * Two owners writing the same field at two different times desynchronised it: a
+       * regression run that wore all five Marks and then explicitly wore the Mk III ended
+       * up with `state.armor = 'mk50'` and `suit.rig.id = 'mk3'`. That is not cosmetic —
+       * the parked-shell prompt reads the wrong name, re-entering restores the wrong id,
+       * and flight/ picks its thrust, mass and top speed from ARMOR_SPECS by that id, so
+       * a Mk III would have been flying on the Mk L's numbers.
+       *
+       * The rest of this handler is genuinely onfoot's business: stop walking, give up the
+       * camera, take the prompt down. */
+      ctx.state.mode = 'flight'; ctx.state.suitClosed = true;
       api.active = false; api.ownsCamera = false; chosen = id; approach = -1;
       if (ctx.ui) ctx.ui.prompt(null);
     });

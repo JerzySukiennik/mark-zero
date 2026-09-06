@@ -154,20 +154,45 @@ function mergeable(o, allowNamed) {
   return true;
 }
 
-/** position + normal + uv only, so every geometry in a group has the same attribute set.
+/** position + normal + uv only, as Float32, so every geometry in a group has the same
+ *  attribute set AND the same array type.
+ *
+ *  The types matter as much as the names. `EXT_meshopt_compression` hands back quantized
+ *  attributes — UVs as normalized Uint16, normals as Int8 — and mergeGeometries refuses a
+ *  group whose members disagree:
+ *
+ *      THREE.BufferGeometryUtils: .mergeAttributes() failed.
+ *      BufferAttribute.array must be of consistent array types across matching attributes.
+ *
+ *  Twenty of those a run, and every one is a batch that silently did not happen. Reading
+ *  through `getX/getY/getZ` dequantizes normalized integers and flattens interleaved
+ *  buffers on the way out, so whatever the asset pipeline does upstream, what comes out of
+ *  here is plain float32 and always mergeable.
+ *
  *  `toLocal` takes world space back into the frame the merged mesh will live in — do NOT
  *  assume that frame is the identity just because the group looks untransformed. */
+function copyAsFloat(src, itemSize) {
+  const out = new Float32Array(src.count * itemSize);
+  for (let i = 0; i < src.count; i++) {
+    out[i * itemSize] = src.getX(i);
+    if (itemSize > 1) out[i * itemSize + 1] = src.getY(i);
+    if (itemSize > 2) out[i * itemSize + 2] = src.getZ(i);
+  }
+  return new THREE.BufferAttribute(out, itemSize);
+}
+
 function normalise(mesh, toLocal) {
   const src = mesh.geometry;
   const g = (src.index ? src.toNonIndexed() : src.clone());
+  const pos = g.getAttribute('position');
   const keep = new THREE.BufferGeometry();
-  keep.setAttribute('position', g.getAttribute('position').clone());
+  keep.setAttribute('position', copyAsFloat(pos, 3));
   const n = g.getAttribute('normal');
-  keep.setAttribute('normal', n ? n.clone()
-    : new THREE.BufferAttribute(new Float32Array(g.getAttribute('position').count * 3), 3));
+  keep.setAttribute('normal', n ? copyAsFloat(n, 3)
+    : new THREE.BufferAttribute(new Float32Array(pos.count * 3), 3));
   const uv = g.getAttribute('uv');
-  keep.setAttribute('uv', uv ? uv.clone()
-    : new THREE.BufferAttribute(new Float32Array(g.getAttribute('position').count * 2), 2));
+  keep.setAttribute('uv', uv ? copyAsFloat(uv, 2)
+    : new THREE.BufferAttribute(new Float32Array(pos.count * 2), 2));
   if (!n) keep.computeVertexNormals();
   mesh.updateWorldMatrix(true, false);
   _m.copy(toLocal).multiply(mesh.matrixWorld);

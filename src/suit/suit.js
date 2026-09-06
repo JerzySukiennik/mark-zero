@@ -56,9 +56,26 @@ export default {
 
       async equip(id) {
         if (!api.armors.includes(id)) { console.warn('[suit] unknown armor', id); return null; }
-        if (api.id === id && api.rig) return api.rig;
+        if (api.id === id && api.rig) { ctx.state.armor = id; return api.rig; }
+        /* LAST REQUEST WINS.
+         *
+         * equip() awaits an 8 MB model load, so two calls can be in the air at once — pick
+         * one Mark on the tablet and change your mind, and both finish. Whichever finishes
+         * SECOND used to win and write its id into ctx.state.armor, which is not
+         * necessarily the one you asked for last. Caught by the regression suite: a run
+         * that wore all five armours and then explicitly wore the Mk III came back wearing
+         * the Mk L, because the Mk L's load landed after.
+         *
+         * A request token settles it. Anything that returns to find the token moved on
+         * throws its work away rather than installing it. */
+        const token = (api._equipToken = (api._equipToken || 0) + 1);
         api.unequip();
         const rig = await loadArmor(ctx, id);
+        if (token !== api._equipToken) {
+          // Superseded while the file was loading. Dispose what we loaded and say nothing.
+          if (rig && rig.dispose) { try { rig.dispose(); } catch (e) { /* nothing to undo */ } }
+          return null;
+        }
         api.rig = rig;
         api.id = id;
         api.pivots = rig.pivots;
