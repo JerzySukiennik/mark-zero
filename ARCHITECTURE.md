@@ -736,3 +736,33 @@ Honest result: **371 -> 347 meshes, 723 -> 699 calls.** Most of the rack did not
 the merge and it is not yet established why — the filter rejects it for one of its own
 reasons and that has not been chased down. Recorded as an open lead rather than dressed up:
 the next pass should instrument `mergeable()` to report *which* test rejected each mesh.
+
+### Why the display rack would not bake, and the bug that answered
+
+The open lead from the last pass, instrumented rather than guessed. Of 359 meshes in the
+armour rack:
+
+    named 339   transparent 10   mergeable 10  (and all ten are singletons)
+
+They are **named because they are real armour models**. The cases hold loaded `.glb` suits,
+about 120 named plates each, not the placeholder silhouettes — so the filter was right to
+refuse them, and for exactly the reason it was written.
+
+Chasing that turned up something worse in code already shipped. `mergeStatic` disposed each
+merged mesh's geometry on the spot, and **geometries are routinely shared**: props.js hands
+the same box to a hundred crates, `combat/vfx.js` keeps one sphere and one ring for every
+effect, and the rack holds whole armour models whose geometry the wearable rig may also
+hold. Disposing one of those blanks some object elsewhere in the scene — or the suit you put
+on ten minutes later.
+
+Candidates are collected during the merge now and freed only after a full scene walk proves
+nothing surviving still points at them. The report says it was not hypothetical:
+
+    shop      freed 1000   still shared 0
+    interior  freed  319   still shared 1     <-- would have been disposed while in use
+    town      freed 1132   still shared 0     (2366 merged; the rest shared geometry with each other)
+    fair      freed  554   still shared 0
+    donut     freed   55   still shared 0
+
+Verified after the fix: 2224 meshes in the scene, **0 with no position attribute**, and a
+worn Mk III has all 37 plates with drawable geometry.

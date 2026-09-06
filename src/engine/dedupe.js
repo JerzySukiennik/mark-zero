@@ -220,6 +220,7 @@ export function mergeStatic(root, minGroup = 6) {
   });
 
   let merged = 0, batches = 0;
+  const orphaned = new Set();
   for (const list of groups.values()) {
     if (list.length < minGroup) continue;
     let geo = null;
@@ -233,10 +234,29 @@ export function mergeStatic(root, minGroup = 6) {
     out.userData.merged = true;
     out.name = 'merged_' + (first.material.name || 'batch') + '_' + batches;
     root.add(out);
-    for (const m of list) { m.removeFromParent(); m.geometry.dispose(); }
+    // Detach now; decide what may be freed AFTER every batch is done — see below.
+    for (const m of list) { m.removeFromParent(); orphaned.add(m.geometry); }
     merged += list.length;
     batches++;
   }
+  /* FREE ONLY WHAT NOTHING ELSE IS USING.
+   *
+   * The first cut of this disposed each merged mesh's geometry on the spot, which is a
+   * quiet way to break the game: geometries are routinely SHARED. props.js hands the same
+   * box to a hundred crates, combat/vfx.js keeps one sphere and one ring for every effect,
+   * and the display rack holds whole armour models whose geometry the wearable rig may
+   * also be holding. Dispose one of those and some object elsewhere in the scene — or the
+   * suit you put on ten minutes later — renders as nothing.
+   *
+   * So: collect the candidates while merging, then walk the WHOLE SCENE once and free only
+   * the ones no surviving mesh still points at. */
+  let scene = root;
+  while (scene.parent) scene = scene.parent;
+  const candidates = orphaned.size;
+  scene.traverse(o => { if (o.isMesh && o.geometry) orphaned.delete(o.geometry); });
+  let freed = 0;
+  for (const g of orphaned) { g.dispose(); freed++; }
+
   const post = census();
   const dBox = pre.box.isEmpty() || post.box.isEmpty() ? -1 : Math.max(
     pre.box.min.distanceTo(post.box.min), pre.box.max.distanceTo(post.box.max));
@@ -244,6 +264,7 @@ export function mergeStatic(root, minGroup = 6) {
     before: before.length, merged, batches, left: before.length - merged + batches,
     // Both must hold for the bake to be a no-op on appearance.
     trisBefore: pre.tris, trisAfter: post.tris, trisMatch: pre.tris === post.tris,
+    geometriesFreed: freed, geometriesKeptShared: candidates - freed,
     boxShiftM: dBox < 0 ? null : +dBox.toFixed(4),
   };
 }
