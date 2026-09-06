@@ -67,6 +67,10 @@ const Y_AX = new Vec3(0, 1, 0);
 
 const NAMES = ['stand', 'hover', 'cruise', 'brake', 'fire', 'land'];
 
+// How fast each pose arrives and how fast it lets go, per second. See the note in update().
+const ENTER_RATE = { stand: 5.0, hover: 5.0, cruise: 4.0, brake: 9.0, fire: 22.0, land: 26.0 };
+const LEAVE_RATE = { stand: 4.0, hover: 5.0, cruise: 4.0, brake: 6.0, fire: 5.0, land: 3.0 };
+
 function approach(cur, target, rate, dt) {
   const d = target - cur;
   const step = rate * dt;
@@ -125,8 +129,21 @@ export class Poses {
     this.name = name;
 
     // Blends cross-fade rather than snap; a 200 ms fade is what stops the suit popping.
+    /* PER-POSE BLEND RATES.
+     *
+     * One rate of 5/s for everything means every pose takes about 200 ms to arrive. For a
+     * cruise-to-hover cross-fade that is right and is why the number is there. For FIRING it
+     * is the whole problem: the shot leaves on the frame you click, and the arm that is
+     * supposed to be throwing it is still 200 ms behind — Jurek's "jak strzelam, to nie ma
+     * czasu, zeby podniesc reke, i przez to animacja jest glupia". The pose has to beat the
+     * bolt, not chase it. Same for a landing, which is an impact and not a mood.
+     *
+     * Rates are asymmetric: fast in, slower out. Snapping INTO a pose reads as a decision;
+     * snapping out of one reads as a glitch. */
     for (const n of NAMES) {
-      this.blend[n] = approach(this.blend[n], n === name ? 1 : 0, 5.0, dt);
+      const to = n === name ? 1 : 0;
+      const rate = to > this.blend[n] ? (ENTER_RATE[n] || 5.0) : (LEAVE_RATE[n] || 5.0);
+      this.blend[n] = approach(this.blend[n], to, rate, dt);
     }
 
     // --- continuous parameters -----------------------------------------------------------
@@ -225,8 +242,22 @@ export class Poses {
     p.leanRoll = 0;
 
     // Firing hands follow the trigger, with the off hand trailing slightly.
-    p.fireRight = approach(p.fireRight, cmd.fire ? 1 : 0, 9, dt);
-    p.fireLeft = approach(p.fireLeft, cmd.fire ? 1 : 0, 6.5, dt);
+    /* THE ARM GOES FASTER THE FURTHER THE SHOT.
+     *
+     * Jurek: "im dalej, tym szybciej ta reka powinna sie ruszac, zeby dalej to dzialalo
+     * dobrze." He is describing a real thing — a shot at something across the map is a
+     * committed throw, and a shot at something two metres away is a flick. Range comes from
+     * combat/'s own aim ray, which is already computed every time it fires, so this costs
+     * nothing. Near (under 40 m) keeps the old speed; far (300 m and beyond) is nearly three
+     * times faster, which puts the arm up inside about 80 ms.
+     *
+     * Coming DOWN is unchanged and deliberately slower: the arm settles, it does not snap
+     * back to the flank the instant the trigger releases. */
+    const range = (ctx && ctx.combat && ctx.combat.lastRange) || 0;
+    const far = clamp((range - 40) / 260, 0, 1);
+    const upRate = 9 + far * 17;
+    p.fireRight = approach(p.fireRight, cmd.fire ? 1 : 0, cmd.fire ? upRate : 5.5, dt);
+    p.fireLeft = approach(p.fireLeft, cmd.fire ? 1 : 0, cmd.fire ? upRate * 0.75 : 4.5, dt);
 
     // --- publish -------------------------------------------------------------------------
     if (ctx) {

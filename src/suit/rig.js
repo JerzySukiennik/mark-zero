@@ -252,6 +252,8 @@ export class SuitRig {
     this._childDir = {};           // pivot name -> unit dir to child, in pivot LOCAL space
     this._target = {};             // pivot name -> target quaternion
     this._targetNames = null;      // its key list, lazily rebuilt; see _targetQ / updatePose
+    this._shown = null;            // the FILTERED pose per pivot; offsets are applied raw on
+                                   // top of it in updatePose(). See the note there.
     this._poseName = 'stand';
     this._poseBlend = 8;           // rad/s-ish slerp rate
   }
@@ -728,14 +730,34 @@ export class SuitRig {
      * swapping the whole object). In steady flight nothing does, so this costs one array
      * for the life of the pose and nothing per frame. */
     const names = this._targetNames || (this._targetNames = Object.keys(this._target));
+    /* THE FILTER BELONGS TO THE POSE, NOT TO THE OFFSETS.
+     *
+     * This used to be `o.quaternion.slerp(target * offset, k)` — one exponential filter over
+     * the product. The 125 ms time constant is there so that CROSS-FADES between authored
+     * poses do not pop, and for that it is exactly right. But the procedural offsets are the
+     * only fast channel this rig has: the arm trail, the fire reach, the landing crouch, the
+     * g-rattle. Running them through the same filter smeared every one of them before it
+     * ever reached the screen. A 0.2 s fist strike got 125 ms of attack and 125 ms of
+     * release and never arrived; an 11 Hz rattle was attenuated to about a tenth of its
+     * amplitude. That is the mechanism behind "the suit is rigid, it does not move" — the
+     * motion was being computed and then filtered away.
+     *
+     * So: filter the pose into `_shown`, then apply the offset raw on top. Cross-fades stay
+     * smooth, everything procedural renders at full amplitude on the frame it happens.
+     * `_shown` is allocated once per pivot and reused; this stays allocation-free. */
+    let shown = this._shown;
+    if (!shown) shown = this._shown = Object.create(null);
     if (names) {
       for (let i = 0; i < names.length; i++) {
         const p = names[i];
         const q = this._target[p];
         const o = this.pivots[p];
         if (!o || !q) continue;
-        if (off && off[p]) o.quaternion.slerp(_q3.copy(q).multiply(off[p]), k);
-        else o.quaternion.slerp(q, k);
+        let sq = shown[p];
+        if (!sq) { sq = shown[p] = o.quaternion.clone(); }   // once, on first sight
+        sq.slerp(q, k);
+        if (off && off[p]) o.quaternion.copy(sq).multiply(off[p]);
+        else o.quaternion.copy(sq);
       }
     }
     const hips = this.pivots.piv_hips;

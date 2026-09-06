@@ -113,7 +113,14 @@ export class SmokeTrail {
           float s = mix(uSize0, uSize1, pow(clamp(vT, 0.0, 1.0), 0.62));
           // How close the camera is to this puff, 0 when inside it, 1 well clear.
           // Clear well past the third-person camera (about 9 m back), not just past the visor.
-          vNear = clamp((-mv.z - 3.0) / 22.0, 0.0, 1.0);
+          /* Fade only what the camera is genuinely INSIDE. This was a 25-metre ramp, which
+           * sounded like a safe margin and was a serious mistake: the third-person chase
+           * camera flies about 8.5 m behind the suit, so the whole bright head of the trail
+           * — every fresh puff, right at the boots — was faded to nothing in exactly the
+           * view the player uses. Jurek: "w ogole nie widac tej smugi". Three metres still
+           * saves the first-person visor from being fogged by a puff that has grown around
+           * the helmet, and leaves the trail visible from everywhere else. */
+          vNear = clamp((-mv.z - 0.6) / 3.0, 0.0, 1.0);
           gl_PointSize = s * uScale / max(-mv.z, 0.1);
           gl_Position = projectionMatrix * mv;
         }`,
@@ -127,7 +134,7 @@ export class SmokeTrail {
           vec3 col = mix(uHot, uCold, smoothstep(0.0, 0.10, vT));
           // In and out: a puff appears over the first blink and thins out over the rest.
           float a = smoothstep(0.0, 0.03, vT) * (1.0 - smoothstep(0.45, 1.0, vT));
-          a *= tex * (0.62 + 0.26 * vSeed);
+          a *= tex * (0.74 + 0.26 * vSeed);
           /* SOFT AGAINST THE CAMERA. A puff grows to fifteen metres, so in first person you
            * fly straight through your own exhaust and it paints the whole screen white — a
            * hover turned the visor into fog. Fading what the camera is inside of costs one

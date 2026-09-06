@@ -88,13 +88,20 @@ export default {
     }
 
     // --- where the crosshair points ----------------------------------------------------
+    /* HOW FAR AWAY THE PLAYER IS AIMING, published for the pose system.
+     *
+     * flight/poses.js speeds the firing arm up with range — a shot across the map is a
+     * committed throw, a shot at arm's length is a flick. The number is a by-product of the
+     * aim ray that runs on every shot anyway, so publishing it is free. Updated on every
+     * aimPoint() call, including the ones the crosshair makes, so the arm is already moving
+     * at the right speed on the frame the trigger goes down. */
     function aimPoint(maxDist = 900) {
       const cam = ctx.camera;
       cam.getWorldDirection(_fwd);
       const origin = cam.position.clone().addScaledVector(_fwd, 0.4);
       if (ctx.physics && ctx.physics.ready) {
         const hit = ctx.physics.raycast(origin, _fwd, maxDist, null);
-        if (hit) return hit.point;
+        if (hit) { api.lastRange = origin.distanceTo(hit.point); return hit.point; }
       }
       if (ctx.world && ctx.world.surfaceHeight && _fwd.y < -0.01) {
         // march for the ground crossing; the terrain has no analytic solution
@@ -106,8 +113,9 @@ export default {
           const gy = ctx.world.surfaceHeight(p.x, p.z);
           if (Number.isFinite(gy) && p.y < gy) hi = mid; else lo = mid;
         }
-        if (hi < maxDist - 0.5) return origin.clone().addScaledVector(_fwd, hi);
+        if (hi < maxDist - 0.5) { api.lastRange = hi; return origin.clone().addScaledVector(_fwd, hi); }
       }
+      api.lastRange = maxDist;
       return origin.addScaledVector(_fwd, maxDist);
     }
 
@@ -251,7 +259,7 @@ export default {
 
     const api = {
       fire, fireAt, vfx, bolts, beam,
-      charge: 0, charging: false,
+      charge: 0, charging: false, lastRange: 0,
       fireCharged, stepCharge,
       get projectiles() { return bolts.live; },
       get cooling() { return cooldown; },

@@ -8,9 +8,9 @@
 //
 // Three layers, in the order they read on screen:
 //
-//   PLUME   a cone hanging off the emitter, length driven by that emitter's share of the
-//           thrust. White-hot at the throat, orange at the mouth. Additive, never tone
-//           mapped, exactly like every other emissive in the game (see combat/vfx.js).
+//   PLUME   REMOVED. It was a cone per emitter, and a cone cannot be fire — see the note
+//           in the update loop. The geometry and materials are still built (the warm-up and
+//           the pooling reference them) but they never draw.
 //   GLOW    a camera-facing sprite at the throat, so the source is a blown-out point from
 //           any angle and not a cone seen edge-on as a line.
 //   TRAIL   the flight line. Smoke off the boots that hangs in the air for seconds after
@@ -302,12 +302,25 @@ export class ThrustFX {
       const k = want > e.level ? 1 - Math.exp(-dt / 0.035) : 1 - Math.exp(-dt / 0.13);
       e.level += (want - e.level) * k;
       const lvl = e.level * (0.92 + 0.16 * Math.sin(this.ctx.time * 47 + e.radius * 900));
+      /* THE DRAWN CONES ARE GONE.
+       *
+       * Two cones per emitter — a white core inside a coloured bloom — were the "flame".
+       * Whatever colour they were given, from the original magenta to the white-hot orange
+       * gradient that replaced it, Jurek's verdict never moved: "dalej sa jakies dziwne,
+       * takie narysowane obrzydliwe repulsory... usun calkowicie". He is right. A cone is a
+       * hard-edged solid, and a hard-edged solid pretending to be fire reads as a plastic
+       * party hat stuck on the boot — the shape is the problem, not the palette.
+       *
+       * What stays is what actually says "thruster": the blown-out sprite at the throat,
+       * which is a falloff rather than a shape and has no silhouette to look wrong, plus the
+       * point light it casts and the smoke pouring out below. Kept as hidden objects rather
+       * than deleted so the emitter bookkeeping, the pooling and the warm-up all stay as
+       * they were; they simply never draw. */
       const vis = lvl > 0.02;
-      e.core.visible = e.bloom.visible = e.glow.visible = vis;
+      e.core.visible = false;
+      e.bloom.visible = false;
+      e.glow.visible = vis;
       if (!vis) continue;
-      const len = 0.10 + lvl * (e.boot ? 1.25 : 0.55);
-      e.core.scale.set(e.radius * 0.62, len * 0.55, e.radius * 0.62);
-      e.bloom.scale.set(e.radius * 1.55, len, e.radius * 1.55);
       // HALF the first pass, on both size and opacity. Additive white over a lit ocean has
       // no way to be subtle: at 5.2-10.2 radii and full opacity the four glows merged into
       // one blown-out streak from the chest to the hips and the armour vanished inside it
@@ -318,7 +331,6 @@ export class ThrustFX {
       // Brighter than it was: the complaint was that the thrusters do not look like they
       // emit light, and the sprite at the throat is the only part that says "source".
       e.glow.material.opacity = Math.min(1, 0.24 + lvl * 0.56);
-      e.core.material.opacity = Math.min(1, 0.30 + lvl * 0.30);
     }
 
     // Lights: one per boot, following the real emitter, brightness from that boot's level.
@@ -369,8 +381,9 @@ export class ThrustFX {
         // material with nothing to fire through.
         const lit = Math.max(0, (outv - 0.6) / 0.4);
         const lvl = lit * (0.9 + 0.2 * Math.sin(this.ctx.time * 31 + w.side));
-        w.core.scale.set(0.030, 0.34 * lvl, 0.030);
-        w.bloom.scale.set(0.075, 0.62 * lvl, 0.075);
+        // Same rule as the boot plumes above: no drawn cones anywhere.
+        w.core.visible = false;
+        w.bloom.visible = false;
       }
       this.mWing.emissiveIntensity = Math.max(0, (outv - 0.6) / 0.4) * 1.6;
       this._bleedSuit(outv);

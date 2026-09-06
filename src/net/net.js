@@ -95,6 +95,14 @@ export function installNet(ctx) {
     set name(v) { name = String(v || '').slice(0, 12) || name; try { localStorage.setItem(NET.nameKey, name); } catch (e) {} },
     get health() { return health; },
     get players() { return remotes ? remotes.players : new Map(); },
+    /* Which armour the other players see you wearing. Chosen in the lobby before anyone
+     * takes off, so it is a lobby setting rather than a game one — you can be flying a Mk L
+     * and still appear as whatever you picked, which is what "choose your avatar" means in
+     * every game Jurek has played. Published in the presence payload. */
+    avatar: 'mk3',
+    /* True once the transport can reach players on other machines. False means the local
+     * tab-to-tab driver, and the lobby says so rather than promising something it cannot do. */
+    get remote() { return !!(driver && driver.remote); },
     get count() { return remotes ? remotes.players.size + 1 : 1; },
 
     /** A fresh room code, for the player who is starting the game. */
@@ -223,8 +231,10 @@ export function installNet(ctx) {
       const q = (ctx.suit && ctx.suit.root) ? ctx.suit.root.quaternion : (m ? m.quaternion : null);
       driver.publish({
         t: now,
-        n: name,
-        a: ctx.state.armor || 'mk3',
+        n: api.name || name,
+        // The armour the OTHERS see. The lobby choice wins; the armour actually being worn
+        // is a fallback for a session that never opened the lobby.
+        a: api.avatar || ctx.state.armor || 'mk3',
         h: health,
         p: [pos.x, pos.y, pos.z],
         q: q ? [q.x, q.y, q.z, q.w] : [0, 0, 0, 1],

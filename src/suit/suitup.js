@@ -30,6 +30,16 @@ const SPEC_NAMES = {
   mk1: 'MARK I', mk2: 'MARK II', mk3: 'MARK III', mk42: 'MARK XLII', mk50: 'MARK L',
 };
 
+/* Which armours put THEMSELVES on. Kept here as a local table for the same reason as
+ * SPEC_NAMES above — suit/ must not import flight/, because registry.js fixes the init
+ * order the other way round and an import would make this module's load depend on a module
+ * that has not been built yet. flight/'s ARMOR_SPECS carries the same `selfDon` flag for
+ * the flight side; these two are a pair, so change both or neither.
+ *
+ * A self-donning armour gets no gantry: the plates fly in on their own arcs and close
+ * around him with no machine in shot. */
+const SELF_DON = { mk3: true, mk50: true };
+
 const SEQUENCES = { mk1, mk2, mk3, mk42, mk50 };
 
 export default {
@@ -134,9 +144,25 @@ export default {
         ctx.suit.followPlayer = false;
         ctx.suit.showBody(!!body);
 
-        if (seq.origin === 'gantry') {
+        /* THE OLD WORKSHOP GANTRY, AND WHEN IT IS ALLOWED TO EXIST.
+         *
+         * `gantry.js` is the four-armed rig from the Malibu workshop. That map is gone and
+         * the suit-up ring replaced it, but this still built the old machine and stood it on
+         * the proto stage — Jurek: "pojawia sie kolejny robot wczesniejszej wersji, ktory to
+         * robi, i to jest dziwne". It is a second, older-looking robot doing the ring's job
+         * right next to the ring.
+         *
+         * SELF_DON marks mk3 and mk50: they assemble themselves and were never
+         * supposed to have arms. The plate choreography in the sequences runs off bezier
+         * arcs and does not need the gantry at all — every gantry call in them is already
+         * behind `if (gantry)` — so a null here gives exactly what he asked for: the plates
+         * fly in and close around him with no machine in sight. */
+        const selfDon = !!SELF_DON[seq.id];
+        if (seq.origin === 'gantry' && !selfDon) {
           if (!gantry) gantry = await Gantry.create(ctx);
           gantry.setVisible(true);
+        } else if (gantry) {
+          gantry.setVisible(false);
         }
 
         // Compile before the curtain goes up. The Mk L patches sixty-four materials and
@@ -160,7 +186,7 @@ export default {
           catch (e) { /* a warm-up nobody waits on cannot break anything */ }
         }
 
-        const api = makeApi(ctx, seq, gantry);
+        const api = makeApi(ctx, seq, selfDon ? null : gantry);
         seq.prepare(api);
         active = { seq, api, t: 0, done: false, resolve: null };
         self.playing = true;
@@ -215,7 +241,7 @@ export default {
         for (let t = 0; t < time; t += step) {
           active.t = Math.min(time, t + step);
           active.seq.update(active.t, step, active.api);
-          if (gantry && seq.origin === 'gantry') gantry.setVisible(true);
+          if (gantry && seq.origin === 'gantry' && !SELF_DON[seq.id]) gantry.setVisible(true);
         }
         self.t = active.t;
         self.progress = active.t / seq.duration;

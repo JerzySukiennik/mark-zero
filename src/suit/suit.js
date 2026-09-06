@@ -224,6 +224,18 @@ export default {
         wantBody = !!v;
         if (v && faceOnly) api.showFace(false);   // a whole boy, not a floating head
         bodyGroup.visible = !!v || faceOnly;
+        /* MAKE SURE THERE IS A BOY TO SHOW.
+         *
+         * This used to only flip the group's visibility, and the group is EMPTY until
+         * loadBody() has run — which happened on the first suit-up and nowhere else. So on
+         * a fresh game, switching to third person turned on an empty group: `bodyVisible`
+         * reported true, there was no avatar on screen, and nothing anywhere said why.
+         * Jurek reported it twice as "nie widać avatara w trzeciej osobie", and both times
+         * the flag I checked said he was visible.
+         *
+         * Asking for the body is now what loads it. loadBody() is idempotent and caches, so
+         * repeat calls are free. */
+        if (v && !bodyRig) api.loadBody().catch(() => {});
       },
       get bodyVisible() { return bodyGroup.visible; },
 

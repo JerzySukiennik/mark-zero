@@ -8,6 +8,17 @@
 // so a machine that fires 500 mousemove events a second and one that fires 60 produce
 // the same motion: the deltas accumulate and are consumed once per step.
 
+/**
+ * True when the event is going to something the player is typing into. Exported because the
+ * shell in main.js binds its own keys (Escape, R, X, G) on the window and has exactly the
+ * same problem: a room code with an R in it must not restart the game.
+ */
+export function isTyping(target) {
+  if (!target || !target.tagName) return false;
+  const t = target.tagName;
+  return t === 'INPUT' || t === 'TEXTAREA' || t === 'SELECT' || target.isContentEditable === true;
+}
+
 export const BINDINGS = {
   // on foot
   forward: ['KeyW', 'ArrowUp'],
@@ -66,11 +77,25 @@ export class Input {
 
     addEventListener('keydown', e => {
       if (e.metaKey || e.ctrlKey && e.code === 'KeyR') return;  // let cmd-R reload
+      /* WHEN THE PLAYER IS TYPING, HE IS NOT FLYING.
+       *
+       * This listener is on the window, so it used to swallow every key in the document —
+       * including the ones going into the room-code box in the multiplayer lobby. Two
+       * things went wrong at once: `preventDefault()` on the PREVENT set stopped the
+       * character ever reaching the field (Jurek: "jak przyciskam W albo cos takiego, to
+       * nie dziala"), and every letter that did get through was ALSO pressed in the game
+       * behind the menu — so typing a room code walked the player, and a code containing R
+       * restarted the run.
+       *
+       * A focused text field owns the keyboard. Nothing else in the engine has to know. */
+      if (isTyping(e.target)) return;
       if (PREVENT.has(e.code)) e.preventDefault();
       if (e.repeat) return;
       this.pressedRaw.add(e.code);
       this.keys.add(e.code);
     });
+    // No isTyping() guard on keyup: if a key went down in the game and up in a field, the
+    // game must still see it released, or it sticks on forever.
     addEventListener('keyup', e => this.keys.delete(e.code));
 
     // Losing focus with W held would otherwise walk the player into the sea forever.

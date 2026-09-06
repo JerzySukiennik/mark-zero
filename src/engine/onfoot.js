@@ -404,10 +404,29 @@ export default {
        * him) — he was simply never shown outside a suit-up. Third person on foot pointed a
        * chase camera at nobody. */
       const wantBoy = onFoot && !st.armor && st.view === 'third';
+      /* Compare against what is ACTUALLY on screen, not against a flag we set last time.
+       *
+       * This used to latch on `api._boyShown`, so it only ever acted when its own idea of
+       * the state changed. Anything else that hid the boy — unequip() does, and so does the
+       * end of a suit-up — left this module believing he was still shown, and it never
+       * asked again. The avatar stayed switched off with nothing reporting anything wrong.
+       * `bodyVisible` is the truth; ask it. */
       if (ctx.suit && ctx.suit.showBody && !(ctx.suitup && ctx.suitup.playing) &&
-          !(ctx.suit.parked) && wantBoy !== api._boyShown) {
+          !(ctx.suit.parked) && wantBoy !== ctx.suit.bodyVisible) {
         api._boyShown = wantBoy;
         ctx.suit.showBody(wantBoy);
+      }
+      /* AND HE HAS TO BE WHERE THE PLAYER IS.
+       *
+       * The boy lives inside the suit group, because normally an armour is closing around
+       * him. `followPlayer` is what walks that group to the player's stance, and it gets
+       * switched OFF whenever an armour is left standing somewhere (a doff parks it; the
+       * menu's attract flies it). With no armour on and none parked, there is nothing in
+       * that group but the avatar, so it must track the player again — otherwise he is
+       * loaded, flagged visible, and standing wherever the group was abandoned. Measured:
+       * bodyVisible true, and zero visible meshes within three metres of the player. */
+      if (ctx.suit && wantBoy && !ctx.suit.parked && !ctx.suit.rig && !ctx.suit.followPlayer) {
+        ctx.suit.followPlayer = true;
       }
       if (!api.active || (st.mode !== 'onfoot' && approach < 0)) {
         if (ctx.ui && st.mode !== 'onfoot') ctx.ui.prompt(null);
@@ -658,6 +677,21 @@ export default {
                    * is "you step on when YOU want to", so picking here arms the ring and
                    * nothing else happens until you walk onto it. */
                   api.pending = id;
+                  /* START THE DOWNLOAD NOW, WHILE HE WALKS.
+                   *
+                   * The armour GLB is several megabytes and used to be fetched, parsed and
+                   * indexed by `equip()` at the moment the player stepped onto the ring —
+                   * so the ritual began with a multi-second freeze, every time. Jurek: "jak
+                   * już wybrałem strój i podchodzę do tej platformy, to mi laguje".
+                   *
+                   * ctx.assets.loadModel caches the parsed glTF, so this is not a second
+                   * load: it is the SAME load, moved to the moment of choosing. The walk
+                   * from the tablet to the ring is several seconds of cover for it, and
+                   * equip() then only has to clone. Fire and forget — a failure here is
+                   * simply the old behaviour, and equip() reports it properly. */
+                  if (ctx.assets && ctx.assets.loadModel) {
+                    ctx.assets.loadModel('models/' + id + '.glb').catch(() => {});
+                  }
                   if (ctx.ui) ctx.ui.say((ARMORS.find(a => a.id === id) || {}).name +
                                          ' READY. STEP ONTO THE RING.');
                 });

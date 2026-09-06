@@ -51,6 +51,62 @@ const CSS = `
 #mz-menu .row{display:flex;justify-content:space-between;gap:16px;padding:6px 0;
   border-bottom:1px dotted rgba(120,180,205,.16);font-size:11px}
 #mz-menu .row b{font-weight:400;color:rgba(190,225,240,.6)}
+
+/* ── the multiplayer lobby ──────────────────────────────────────────────────────────
+ * The panel is a decision, not a form: one row for who you are, then create-or-join, then
+ * who is actually in the room. Everything below exists to make the CODE the loudest thing
+ * on the panel — it is the one piece of information that has to travel across a room by
+ * being read out loud. */
+#mz-menu .mzin{flex:1;min-width:0;background:rgba(0,0,0,.34);color:#eaf6fb;
+  border:1px solid rgba(120,200,230,.28);padding:7px 9px;font:inherit;font-size:12px;
+  letter-spacing:.12em;text-transform:uppercase;outline:none;transition:border-color .15s}
+#mz-menu .mzin:focus{border-color:#7fd4f5}
+#mz-menu .mzin::placeholder{color:rgba(190,225,240,.28);letter-spacing:.12em}
+#mz-menu .mzsplit{display:flex;align-items:center;gap:12px;margin:16px 0 4px;flex-wrap:wrap}
+#mz-menu .mzor{font-size:9px;letter-spacing:.3em;color:rgba(190,225,240,.35);text-transform:uppercase}
+#mz-menu .mzjoin{display:flex;align-items:center;gap:8px;flex:1;min-width:190px}
+/* The code itself: big, spaced, centred, monospaced. A code you can read out. */
+#mz-menu .mzcode{text-align:center;font-size:20px;letter-spacing:.42em;padding:8px 4px 8px 12px;
+  font-variant-numeric:tabular-nums}
+#mz-menu .mzcode.bad{border-color:#ff6b5a}
+#mz-menu .item.primary{border:1px solid rgba(120,200,230,.34);padding:10px 16px;
+  color:#eaf6fb;white-space:nowrap}
+#mz-menu .item.primary:hover{background:rgba(127,212,245,.10)}
+#mz-menu .mzmsg{min-height:1.5em;font-size:11px;color:#8fd8f0}
+#mz-menu .mzmsg.err{color:#ff8f80}
+#mz-menu .mzroster{display:flex;flex-direction:column;gap:3px;margin:6px 0 2px;min-height:1px}
+#mz-menu .mzwho{display:flex;align-items:center;gap:8px;font-size:11px;
+  color:rgba(223,242,251,.78)}
+#mz-menu .mzdot{width:6px;height:6px;border-radius:50%;background:#6ee7a8;flex:none}
+#mz-menu .mzwho.me .mzdot{background:#7fd4f5}
+#mz-menu .mzwho em{font-style:normal;color:rgba(190,225,240,.45);font-size:9px;
+  letter-spacing:.22em;text-transform:uppercase}
+#mz-menu .hint{font-size:10px;color:rgba(190,225,240,.42);line-height:1.55}
+
+/* THE LOBBY IS A DIALOG, NOT A SIDE PANEL.
+ *
+ * Every other pane hangs off the left column because it is a list you read. The lobby is
+ * something you DO, with a code someone else has to read off your screen, so it belongs in
+ * the middle where both of you are already looking. Jurek: "powinno sie pojawiac posrodku
+ * ekranu". Wider than the panes, centred, and it dims the whole frame behind it. */
+#mz-menu .pane[data-pane="multi"]{left:50%;top:50%;transform:translate(-50%,-50%);
+  width:min(560px,88vw);padding:30px 34px 26px;background:rgba(5,12,17,.94);
+  border:1px solid rgba(120,200,230,.30);
+  box-shadow:0 30px 90px rgba(0,0,0,.6),0 0 0 100vmax rgba(3,7,10,.55)}
+#mz-menu .pane[data-pane="multi"] h3{margin-bottom:4px}
+
+/* The avatar strip: six suits, pick one, it is who the others see you as. */
+#mz-menu .mzavatars{display:flex;gap:8px;margin:10px 0 4px;flex-wrap:wrap}
+#mz-menu .mzav{width:52px;height:52px;border:1px solid rgba(120,200,230,.22);
+  background:rgba(0,0,0,.3);cursor:pointer;padding:0;position:relative;
+  transition:border-color .15s,transform .12s}
+#mz-menu .mzav:hover{transform:translateY(-2px)}
+#mz-menu .mzav.sel{border-color:#7fd4f5;box-shadow:0 0 0 1px #7fd4f5 inset}
+#mz-menu .mzav i{position:absolute;inset:7px;border-radius:2px;display:block}
+#mz-menu .mzav span{position:absolute;left:0;right:0;bottom:3px;font-size:7px;
+  letter-spacing:.16em;text-align:center;color:rgba(200,230,245,.6)}
+#mz-menu .mzlabel{font-size:9px;letter-spacing:.34em;text-transform:uppercase;
+  color:rgba(190,225,240,.45);margin:14px 0 2px}
 `;
 
 const ITEMS = [
@@ -80,17 +136,37 @@ export function installMenu(ctx, { onStart }) {
       '<div class="row"><b>Shadows</b><span data-v="sh">—</span></div>' +
       '<p style="margin-top:12px">Adjust with the keys shown in CONTROLS (?).</p>' +
       '<button class="item back">Back</button></div>' +
+    /* THE LOBBY.
+     *
+     * Rebuilt after Jurek's verdict — "caly ten UX, UI tego panelu lobby jest bardzo slaby".
+     * What was wrong: the code box did not force upper case while the join path upper-cased
+     * behind your back, so what you typed and what the game used were different strings; the
+     * two buttons looked identical although one creates and one joins; there was no way to
+     * see who is in the room; and Enter did nothing.
+     *
+     * The shape now: your callsign, then ONE decision (create or join), then a live roster.
+     * The code field is `mzcode` — upper case, letter-spaced, centred, so a code reads like
+     * a code and can be copied off a screen by someone across the room. */
     '<div class="pane" data-pane="multi"><h3>MULTIPLAYER</h3>' +
-      '<p>Everyone in the same sky. Fly together, shoot each other.</p>' +
-      '<div class="row"><b>Callsign</b><input class="mzin" data-v="name" maxlength="12"></div>' +
-      '<div class="row"><b>Room code</b><input class="mzin" data-v="code" maxlength="8" placeholder="ABC123"></div>' +
-      '<button class="item" data-act="host">Start a new room</button>' +
-      '<button class="item" data-act="join">Join that room</button>' +
-      '<p data-v="netmsg" style="min-height:1.4em"></p>' +
-      '<p style="opacity:.7">Right now a room is shared between TABS ON THIS MACHINE — open a ' +
-        'second tab, enter the same code, and there are two of you. Playing with someone ' +
-        'elsewhere needs the database rules deployed; that touches every other Gzowo game, ' +
-        'so it waits for Jurek to say go.</p>' +
+      '<p class="sub">Everyone in the same sky. Fly together, shoot each other.</p>' +
+      '<p class="mzlabel">Your callsign</p>' +
+      '<input class="mzin" data-v="name" maxlength="12" placeholder="JUREK" ' +
+             'autocomplete="off" spellcheck="false" style="width:100%">' +
+      '<p class="mzlabel">Your armour</p>' +
+      '<div class="mzavatars" data-v="avatars"></div>' +
+      '<div class="mzsplit">' +
+        '<button class="item primary" data-act="host">Create a room</button>' +
+        '<span class="mzor">or</span>' +
+        '<div class="mzjoin">' +
+          '<input class="mzin mzcode" data-v="code" maxlength="6" placeholder="CODE" ' +
+                 'autocomplete="off" spellcheck="false" inputmode="latin" ' +
+                 'aria-label="Room code">' +
+          '<button class="item" data-act="join">Join</button>' +
+        '</div>' +
+      '</div>' +
+      '<p data-v="netmsg" class="mzmsg"></p>' +
+      '<div data-v="roster" class="mzroster"></div>' +
+      '<p data-v="nethint" class="hint"></p>' +
       '<button class="item back">Back</button></div>' +
     '<div class="pane" data-pane="credits"><h3>CREDITS</h3>' +
       '<p>Built by Jurek with Claude.</p>' +
@@ -112,6 +188,7 @@ export function installMenu(ctx, { onStart }) {
     b.addEventListener('click', () => pick(it.id));
     nav.appendChild(b);
   }
+  let rosterTimer = null;
   const panes = {};
   for (const p of el.querySelectorAll('.pane')) panes[p.dataset.pane] = p;
   for (const b of el.querySelectorAll('.back')) b.addEventListener('click', () => showPane(null));
@@ -126,9 +203,21 @@ export function installMenu(ctx, { onStart }) {
       const q = sel => el.querySelector('[data-v="' + sel + '"]');
       if (ctx.net) q('name').value = ctx.net.name;
       q('code').value = (ctx.net && ctx.net.code) || '';
-      q('netmsg').textContent = ctx.net && ctx.net.connected
-        ? ('In room ' + ctx.net.code + ' — ' + ctx.net.count + ' in the sky.') : '';
-    }
+      const cur = (ctx.net && ctx.net.avatar) || 'mk3';
+      for (const o of q('avatars').children) o.classList.toggle('sel', o.dataset.av === cur);
+      if (ctx.net) ctx.net.avatar = cur;
+      const m = q('netmsg');
+      m.classList.remove('err');
+      m.textContent = ctx.net && ctx.net.connected
+        ? ('In room ' + ctx.net.code + '.') : '';
+      q('nethint').textContent = (ctx.net && ctx.net.remote)
+        ? 'Anyone with this code can join, from anywhere.'
+        : 'Right now a room is shared between tabs on this machine. Open a second tab, ' +
+          'enter the same code, and there are two of you.';
+      drawRoster();
+      if (rosterTimer) clearInterval(rosterTimer);
+      rosterTimer = setInterval(drawRoster, 700);
+    } else if (rosterTimer) { clearInterval(rosterTimer); rosterTimer = null; }
     if (panes[id]) {
       if (id === 'settings') {
         const q = s => el.querySelector('[data-v="' + s + '"]');
@@ -140,6 +229,69 @@ export function installMenu(ctx, { onStart }) {
     }
   }
 
+  /* ── the lobby's own behaviour ──────────────────────────────────────────────────
+   * Three things the old panel did not do and Jurek asked for: the code field forces upper
+   * case AS YOU TYPE (it used to upper-case silently on submit, so what you saw and what
+   * the game used were different strings), Enter submits, and you can choose which armour
+   * the other players see you in. */
+  const AVATARS = [
+    { id: 'mk1', name: 'MK I', tint: '#7a6a52' },
+    { id: 'mk2', name: 'MK II', tint: '#9fb0bd' },
+    { id: 'mk3', name: 'MK III', tint: '#a8352c' },
+    { id: 'mk42', name: 'MK 42', tint: '#c8973f' },
+    { id: 'mk50', name: 'MK L', tint: '#b23a48' },
+  ];
+  {
+    const strip = el.querySelector('[data-v="avatars"]');
+    for (const a of AVATARS) {
+      const b = document.createElement('button');
+      b.className = 'mzav';
+      b.dataset.av = a.id;
+      b.innerHTML = '<i style="background:linear-gradient(150deg,' + a.tint + ',#2a2f36)"></i>' +
+                    '<span>' + a.name + '</span>';
+      b.addEventListener('click', () => {
+        if (ctx.net) ctx.net.avatar = a.id;
+        for (const o of strip.children) o.classList.toggle('sel', o.dataset.av === a.id);
+      });
+      strip.appendChild(b);
+    }
+  }
+  {
+    const code = el.querySelector('[data-v="code"]');
+    // Upper case while typing, and keep the caret where it was.
+    code.addEventListener('input', () => {
+      const at = code.selectionStart;
+      code.value = code.value.toUpperCase().replace(/[^A-Z0-9]/g, '');
+      code.setSelectionRange(at, at);
+      code.classList.remove('bad');
+    });
+    const nameEl = el.querySelector('[data-v="name"]');
+    for (const f of [code, nameEl]) {
+      f.addEventListener('keydown', e => {
+        if (e.key !== 'Enter') return;
+        e.preventDefault();
+        el.querySelector('[data-act="' + (f === code ? 'join' : 'host') + '"]').click();
+      });
+    }
+  }
+
+  /** Who is in the room, refreshed while the panel is open. */
+  function drawRoster() {
+    const box = el.querySelector('[data-v="roster"]');
+    if (!box) return;
+    const net = ctx.net;
+    if (!net || !net.connected) { box.innerHTML = ''; return; }
+    // net.players is a Map keyed by peer id, not an array.
+    const others = [];
+    if (net.players && net.players.forEach) {
+      net.players.forEach(p => others.push({ name: (p && p.name) || 'PILOT', me: false }));
+    }
+    const rows = [{ name: net.name || 'YOU', me: true }].concat(others);
+    box.innerHTML = rows.map(r =>
+      '<div class="mzwho' + (r.me ? ' me' : '') + '"><span class="mzdot"></span>' +
+      r.name + (r.me ? ' <em>you</em>' : '') + '</div>').join('');
+  }
+
   /* Multiplayer buttons. Joining does NOT start the game by itself — you pick a room and
    * then Single player as usual, so a room can be set up before anyone takes off. */
   for (const b of el.querySelectorAll('[data-act]')) {
@@ -149,12 +301,26 @@ export function installMenu(ctx, { onStart }) {
       if (!ctx.net) { msg.textContent = 'Networking failed to start.'; return; }
       ctx.net.name = q('name').value;
       const act = b.dataset.act;
-      const code = act === 'host' ? ctx.net.newCode() : q('code').value.toUpperCase().trim();
-      if (act === 'join' && code.length < 4) { msg.textContent = 'That code is too short.'; return; }
+      const code = act === 'host' ? ctx.net.newCode() : q('code').value.trim();
+      msg.classList.remove('err');
+      if (act === 'join' && code.length < 4) {
+        q('code').classList.add('bad');
+        msg.classList.add('err');
+        msg.textContent = 'A room code is four characters or more.';
+        q('code').focus();
+        return;
+      }
       const got = ctx.net.join(code);
-      if (!got) { msg.textContent = 'Could not join that room.'; return; }
+      if (!got) {
+        msg.classList.add('err');
+        msg.textContent = 'Could not join that room.';
+        return;
+      }
       q('code').value = got;
-      msg.textContent = 'Room ' + got + ' — give that code to whoever is joining, then press Single player.';
+      msg.textContent = act === 'host'
+        ? 'Room ' + got + ' is open. Read that code out, then press Single player.'
+        : 'Joined ' + got + '. Press Single player when you are ready.';
+      drawRoster();
     });
   }
 
@@ -187,7 +353,28 @@ export function installMenu(ctx, { onStart }) {
     attract.on = true; attract.t = 0;
     try {
       if (ctx.suit && ctx.suit.wear) await ctx.suit.wear('mk3');
-      if (gen !== attractGen) return;                 // the player already started the game
+      if (gen !== attractGen) {
+        /* The player started the game while this armour was still downloading, so hide()
+         * has already run and already cleaned up — but it cleaned up BEFORE this load
+         * finished, and the armour we were waiting for has just installed itself onto a
+         * game that is no longer the menu. Undo it here, at the only point that knows the
+         * load landed late.
+         *
+         * Symptom when this was missing: a full Mark III standing on the player on the
+         * proto stage, with ctx.state.armor rewritten to 'mk3' by suit/'s per-frame
+         * follower a frame later. In third person that armour is what you see instead of
+         * the avatar, which is why "nie widać avatara" survived three separate fixes. */
+        /* Only clean up if this armour is still OURS. The load can land arbitrarily late —
+         * long enough for the player to have reached the ring and put on a Mark of his own
+         * choosing — and tearing that one off because the poster finally finished loading is
+         * a worse bug than the one this branch exists to fix. Ours means: still the attract's
+         * mk3, nobody has a suit on, and no ritual is running. */
+        const mine = ctx.suit && ctx.suit.id === 'mk3' && !ctx.state.armor &&
+                     ctx.state.mode !== 'suitup' &&
+                     !(ctx.suitup && (ctx.suitup.playing || ctx.suitup.doffing));
+        if (mine && ctx.suit.unequip) { ctx.suit.unequip(); ctx.state.armor = null; }
+        return;
+      }
       if (ctx.flight) {
         ctx.flight.activate({ position: new THREE.Vector3(R, H, 0), yaw: 0 });
         ctx.state.view = 'third';
@@ -269,7 +456,19 @@ export function installMenu(ctx, { onStart }) {
        * real armour on the real flight model, so leaving the screen without standing that
        * down leaves the game in flight mode wearing a suit the player never chose. */
       if (ctx.flight && ctx.flight.deactivate) ctx.flight.deactivate();
-      if (ctx.suit && ctx.suit.root) ctx.suit.root.visible = false;
+      /* TAKE THE POSTER'S ARMOUR APART, do not merely hide it.
+       *
+       * Hiding left the Mk III from the attract screen fully LOADED, with ctx.suit.id still
+       * 'mk3'. Anything that later turned the suit group back on — and several things do,
+       * because normally an armour being loaded means an armour being worn — stood that
+       * armour on the player. Rendered on a fresh game in third person, what you got was a
+       * full Mk III standing where the boy should be: the reason the avatar "could not be
+       * seen" was that a suit nobody had put on was standing in front of it.
+       *
+       * Unequipping means there is no rig to resurrect. The armour the player actually
+       * chooses is loaded from the asset cache, so this costs nothing at the ring. */
+      if (ctx.suit && ctx.suit.unequip) ctx.suit.unequip();
+      else if (ctx.suit && ctx.suit.root) ctx.suit.root.visible = false;
       ctx.state.mode = 'onfoot';
       ctx.state.armor = null;
     },

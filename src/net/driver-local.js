@@ -54,6 +54,9 @@ export function createLocalDriver() {
   }
 
   return {
+    // Tabs on one machine only. The lobby reads this and says so rather than
+    // promising a room that someone on another computer could join.
+    remote: false,
     kind: 'local',
     get code() { return code; },
 

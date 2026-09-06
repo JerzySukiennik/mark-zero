@@ -31,7 +31,7 @@ import { Assets } from './engine/assets.js';
 import { Loop } from './engine/loop.js';
 import { installDebug } from './engine/debug.js';
 import { createUI } from './engine/ui.js';
-import { Input } from './engine/input.js';
+import { Input, isTyping } from './engine/input.js';
 import { dressWorkshop, dressLiving } from './engine/dress.js';
 
 // Proof of life for the fallback in index.html: if this module never parsed or an
@@ -415,6 +415,8 @@ function installShell(ctx, loop, ui) {
 
   addEventListener('keydown', e => {
     if (e.metaKey || e.ctrlKey) return;
+    // A focused text field owns the keyboard — see isTyping() in engine/input.js.
+    if (isTyping(e.target)) return;
     // The armour picker owns the keyboard while it is open.
     if (ui.pickerOpen) {
       if (e.code === 'Escape') {
@@ -487,13 +489,22 @@ function installShell(ctx, loop, ui) {
     if (!input.locked) input.requestLock();
   });
   input.onLockChange(locked => {
-    ui.clickHint(!locked && !ctx.state.paused && !ui.legendOpen && !ui.titleOpen);
+    /* THE ARMOUR PICKER IS A REASON TO LOSE THE POINTER, NOT A REASON TO PAUSE.
+     *
+     * Losing pointer lock means the player alt-tabbed or hit Escape, so pausing is right —
+     * except when the game ITSELF opened a DOM panel that needs the cursor. The guard list
+     * knew about the legend and the title card and not about the armour picker, so choosing
+     * a Mark on the tablet released the pointer and instantly paused: press F, pick a suit,
+     * and you are staring at the pause menu as though you had hit Escape. Exactly what
+     * Jurek reported. */
+    const uiOwnsPointer = ui.legendOpen || ui.titleOpen || ui.pickerOpen;
+    ui.clickHint(!locked && !ctx.state.paused && !uiOwnsPointer);
     if (locked && firstLock) {
       firstLock = false;
       ui.showTitle(false);
       ui.showLegend(false);
     }
-    if (!locked && !ctx.state.paused && !ui.legendOpen && !ui.titleOpen && ctx.state.ready) setPaused(true);
+    if (!locked && !ctx.state.paused && !uiOwnsPointer && ctx.state.ready) setPaused(true);
   });
 
   // The first load gets a title card over the real living room, not a control panel
