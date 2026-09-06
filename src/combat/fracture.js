@@ -360,63 +360,110 @@ export function fractureBox(size, impact, count = 14, opts = {}) {
 export function splitByPlane(geometry, cutY) {
   const src = geometry.index ? geometry.toNonIndexed() : geometry;
   const pos = src.getAttribute('position');
+  /* CARRY THE UVs THROUGH THE CUT.
+   *
+   * This used to emit positions and nothing else. A piece cut off a textured object then
+   * has no `uv` attribute at all, and three feeds a missing attribute as (0,0) — so every
+   * fragment of every piece samples one single texel and the whole chunk comes out as a
+   * flat smear of whatever colour happens to live at the corner of the map. That is
+   * "breaking the donut destroys the texture": the donut is the one big textured thing you
+   * are encouraged to shoot.
+   *
+   * Interpolating them is free, because the cut point is already a lerp along an edge —
+   * the same `t` that places the vertex places its UV. The freshly cut faces have no UV of
+   * their own (they are the inside of the material, which was never mapped), so they take
+   * the centroid of the ring they close, which keeps them the same tone as the surface
+   * around the break instead of a stripe from the far side of the atlas.
+   */
+  const uvAttr = src.getAttribute('uv');
   const upper = [], lower = [];
+  const upperUV = [], lowerUV = [];
   const ringU = [], ringL = [];
   const a = new THREE.Vector3(), b = new THREE.Vector3(), c = new THREE.Vector3();
 
-  const tri = (p, q, r, arr) => {
+  const tri = (p, q, r, arr, uvArr, up, uq, ur) => {
     arr.push(p.x, p.y, p.z, q.x, q.y, q.z, r.x, r.y, r.z);
+    if (!uvArr) return;
+    uvArr.push(up ? up.x : 0, up ? up.y : 0,
+               uq ? uq.x : 0, uq ? uq.y : 0,
+               ur ? ur.x : 0, ur ? ur.y : 0);
   };
-  const lerpY = (p, q) => {
+  // Position AND uv at the crossing, from the same parameter.
+  const lerpY = (p, q, pu, qu) => {
     const t = (cutY - p.y) / (q.y - p.y);
-    return new THREE.Vector3().lerpVectors(p, q, t);
+    const v = new THREE.Vector3().lerpVectors(p, q, t);
+    v.uv = (pu && qu) ? new THREE.Vector2().lerpVectors(pu, qu, t) : null;
+    return v;
   };
+  const uvAt = (i) => uvAttr ? new THREE.Vector2(uvAttr.getX(i), uvAttr.getY(i)) : null;
 
   for (let i = 0; i < pos.count; i += 3) {
     a.fromBufferAttribute(pos, i); b.fromBufferAttribute(pos, i + 1); c.fromBufferAttribute(pos, i + 2);
     const v = [a.clone(), b.clone(), c.clone()];
+    const u = [uvAt(i), uvAt(i + 1), uvAt(i + 2)];
     const above = v.map(p => p.y > cutY);
     const na = above.filter(Boolean).length;
-    if (na === 3) { tri(v[0], v[1], v[2], upper); continue; }
-    if (na === 0) { tri(v[0], v[1], v[2], lower); continue; }
+    if (na === 3) { tri(v[0], v[1], v[2], upper, uvAttr && upperUV, u[0], u[1], u[2]); continue; }
+    if (na === 0) { tri(v[0], v[1], v[2], lower, uvAttr && lowerUV, u[0], u[1], u[2]); continue; }
     // straddling: split into a triangle and a quad
     let solo = above.indexOf(na === 1 ? true : false);
-    const p0 = v[solo], p1 = v[(solo + 1) % 3], p2 = v[(solo + 2) % 3];
-    const i1 = lerpY(p0, p1), i2 = lerpY(p0, p2);
+    const k0 = solo, k1 = (solo + 1) % 3, k2 = (solo + 2) % 3;
+    const p0 = v[k0], p1 = v[k1], p2 = v[k2];
+    const u0 = u[k0], u1 = u[k1], u2 = u[k2];
+    const i1 = lerpY(p0, p1, u0, u1), i2 = lerpY(p0, p2, u0, u2);
     const soloUp = above[solo];
     const soloArr = soloUp ? upper : lower;
     const otherArr = soloUp ? lower : upper;
-    tri(p0, i1, i2, soloArr);
-    tri(i1, p1, p2, otherArr);
-    tri(i1, p2, i2, otherArr);
-    ringU.push(i1.clone(), i2.clone());
-    ringL.push(i1.clone(), i2.clone());
+    const soloUVs = uvAttr ? (soloUp ? upperUV : lowerUV) : null;
+    const otherUVs = uvAttr ? (soloUp ? lowerUV : upperUV) : null;
+    tri(p0, i1, i2, soloArr, soloUVs, u0, i1.uv, i2.uv);
+    tri(i1, p1, p2, otherArr, otherUVs, i1.uv, u1, u2);
+    tri(i1, p2, i2, otherArr, otherUVs, i1.uv, u2, i2.uv);
+    ringU.push(Object.assign(i1.clone(), { uv: i1.uv }));
+    ringU.push(Object.assign(i2.clone(), { uv: i2.uv }));
+    ringL.push(Object.assign(i1.clone(), { uv: i1.uv }));
+    ringL.push(Object.assign(i2.clone(), { uv: i2.uv }));
   }
 
-  const capFan = (ring, arr, up) => {
+  const capFan = (ring, arr, uvArr, up) => {
     if (ring.length < 3) return;
     const cen = new THREE.Vector3();
     for (const p of ring) cen.add(p);
     cen.multiplyScalar(1 / ring.length);
+    // The cut face was never mapped, so give the whole cap one UV — the average of the
+    // ring it closes. It reads as the same material as the surface it broke out of.
+    let cenUV = null;
+    if (uvArr) {
+      cenUV = new THREE.Vector2();
+      let n = 0;
+      for (const p of ring) if (p.uv) { cenUV.add(p.uv); n++; }
+      if (n) cenUV.multiplyScalar(1 / n); else cenUV = null;
+    }
     const sorted = ring.slice().sort((p, q) =>
       Math.atan2(p.z - cen.z, p.x - cen.x) - Math.atan2(q.z - cen.z, q.x - cen.x));
     for (let i = 0; i < sorted.length; i++) {
       const p = sorted[i], q = sorted[(i + 1) % sorted.length];
-      if (up) tri(cen, p, q, arr); else tri(cen, q, p, arr);
+      if (up) tri(cen, p, q, arr, uvArr, cenUV, cenUV, cenUV);
+      else tri(cen, q, p, arr, uvArr, cenUV, cenUV, cenUV);
     }
   };
-  capFan(ringL, lower, true);
-  capFan(ringU, upper, false);
+  capFan(ringL, lower, uvAttr && lowerUV, true);
+  capFan(ringU, upper, uvAttr && upperUV, false);
 
-  const make = (arr) => {
+  const make = (arr, uvArr) => {
     if (arr.length < 9) return null;
     const g = new THREE.BufferGeometry();
     g.setAttribute('position', new THREE.Float32BufferAttribute(arr, 3));
+    // Only if it is complete: a half-filled uv buffer is worse than none, because three
+    // would read past its end for the triangles that were never given one.
+    if (uvArr && uvArr.length === (arr.length / 3) * 2) {
+      g.setAttribute('uv', new THREE.Float32BufferAttribute(uvArr, 2));
+    }
     g.computeVertexNormals();
     g.computeBoundingBox();
     return g;
   };
-  return { upper: make(upper), lower: make(lower) };
+  return { upper: make(upper, uvAttr && upperUV), lower: make(lower, uvAttr && lowerUV) };
 }
 
 /**

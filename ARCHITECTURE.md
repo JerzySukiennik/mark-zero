@@ -488,3 +488,29 @@ GPU stall timings were not measurable in this session's browser pane at all — 
 suit-up measured 204 ms and 1190 ms on consecutive runs — so every change that rested only
 on those numbers was reverted, and only the graph facts (material counts, light counts,
 vertex spacing) and the reproducible living-room figure were kept.
+
+### `node --check` is not a syntax check for this project
+
+It parses a `.js` file as CommonJS and can pass a file that is not a valid ES module at
+all. It cheerfully accepted a `const` declaration sitting **inside a class body**, which
+the browser then refused to load. Use `tools/syntax-check.sh`, which imports each file:
+every module here imports `three`, which node cannot resolve, so a "Cannot find package"
+result means the syntax parsed and only resolution failed, while a `SyntaxError` is real.
+
+### Breaking a textured object destroyed its texture
+
+Two separate holes, both in how fracture geometry is built.
+
+`splitByPlane` emitted positions and **nothing else**. A piece cut off a textured object
+therefore had no `uv` attribute, and three feeds a missing attribute as `(0,0)` — every
+fragment of the piece samples one single texel and the chunk comes out as a flat smear of
+whatever colour lives at the corner of the map. It carries UVs through now: the cut point
+is already a lerp along an edge, so the same `t` that places the vertex places its UV, and
+the freshly cut faces (the inside of the material, never mapped) take the centroid of the
+ring they close so they match the tone of the break.
+
+Voronoi fracture cannot do that — a cell hull is brand-new geometry and there is no
+meaningful mapping for the inside of a solid that was only mapped on its skin. So
+`debris.js` gives any piece with no UVs a **map-less clone** of its material, one per
+source material and cached, darkened slightly because a diffuse map is usually darker than
+the white it multiplies. Pieces that did keep their UVs keep the real texture.

@@ -30,6 +30,40 @@ const UP = new THREE.Vector3(0, 1, 0);
 const G_DEBRIS_SMALL = 0x0002fffd;
 const G_DEBRIS_BIG   = 0x0001ffff;
 
+/* A TEXTURED MATERIAL ON UNTEXTURED GEOMETRY IS A SMEAR.
+ *
+ * Voronoi fracture builds each piece as brand-new geometry from the cell hull, so a chunk
+ * has positions and normals and no `uv` at all — there is no meaningful mapping for the
+ * inside of a solid that was only ever mapped on its skin. Handed the source material
+ * anyway, three feeds the missing attribute as (0,0): every fragment of the piece samples
+ * one single texel, and the chunk comes out as a flat wash of whatever colour lives at the
+ * corner of the map. On the giant donut — the one big textured thing the game invites you
+ * to shoot — that is "breaking the donut destroys the texture".
+ *
+ * So a piece with no UVs gets a map-less version of its material. One clone per source
+ * material, cached, because the whole point of sharing materials is not to make a new one
+ * per piece (see engine/dedupe.js for what that costs). Pieces that DID keep their UVs —
+ * anything cut by splitByPlane, which interpolates them now — keep the real material and
+ * the real texture.
+ */
+const _unmapped = new WeakMap();
+function unmappedFor(material, geometry) {
+  if (!material || Array.isArray(material)) return material;
+  if (!material.map) return material;
+  if (geometry && geometry.getAttribute && geometry.getAttribute('uv')) return material;
+  let m = _unmapped.get(material);
+  if (!m) {
+    m = material.clone();
+    m.map = null;
+    // Keep the tone: a diffuse map is usually darker than the white it multiplies, so
+    // dropping it without compensating turns rubble into bright paper.
+    if (m.color) m.color.multiplyScalar(0.72);
+    m.name = (material.name || 'debris') + '_nomap';
+    _unmapped.set(material, m);
+  }
+  return m;
+}
+
 export class DebrisField {
   constructor(ctx, opts = {}) {
     this.ctx = ctx;
@@ -84,6 +118,8 @@ export class DebrisField {
     };
   }
 
+
+
   /**
    * Spawn one real piece.
    * @param o.geometry   BufferGeometry, centred on its own centre of mass
@@ -97,7 +133,7 @@ export class DebrisField {
   spawn(o) {
     const ctx = this.ctx;
     if (!ctx.physics || !ctx.physics.ready) return null;
-    const mesh = new THREE.Mesh(o.geometry, o.material);
+    const mesh = new THREE.Mesh(o.geometry, unmappedFor(o.material, o.geometry));
     mesh.position.copy(o.position);
     if (o.quaternion) mesh.quaternion.copy(o.quaternion);
     mesh.receiveShadow = true;
