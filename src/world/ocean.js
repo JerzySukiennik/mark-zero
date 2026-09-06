@@ -284,8 +284,26 @@ export function buildOcean(ctx, sun) {
     update(dt, camera, time) {
       uniforms.uTime.value = time;
       uniforms.uCam.value.copy(camera.position);
-      // Snap the disc under the camera in XZ. y stays at sea level.
-      mesh.position.set(0, 0, 0);
+      /* FOLLOW THE CAMERA. The comment here used to say "snap the disc under the camera"
+       * and the line under it parked the disc at the world origin, which is not the same
+       * thing and is why the sea shimmers as soon as you leave home.
+       *
+       * The disc is radial: ring radius grows as t^3.1 out to 20 km, so the spacing is
+       * about a metre in the middle and hundreds of metres at the rim. Nailed to the
+       * origin, that dense middle sits under the HOUSE — fly out to the town three
+       * kilometres away and you are over rings spaced further apart than the waves
+       * themselves, so every frame resamples a completely different set of crests and the
+       * water crawls and sparkles. It looks correct at the spawn and falls apart exactly
+       * as you fly, which is what Jurek reported.
+       *
+       * Snapped to a 2 m grid rather than followed continuously: the wave field is
+       * evaluated in WORLD space in the vertex shader, so a disc that slides by a fraction
+       * of a metre every frame moves every vertex to a new place on the wave and swims.
+       * On a grid the sample points are stable and the whole pattern only ever steps, by
+       * an amount far below one near-field ring. */
+      const q = 2;
+      mesh.position.set(Math.round(camera.position.x / q) * q, 0,
+                        Math.round(camera.position.z / q) * q);
     },
   };
 }

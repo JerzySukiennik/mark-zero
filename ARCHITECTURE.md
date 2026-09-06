@@ -439,3 +439,21 @@ worst on the first shot of a burst, before the fire pose has swung the arm forwa
 The muzzle now keeps its real position unless it is behind the camera plane, in which case
 it slides forward along the shot line just far enough to clear it. Measured after: the bolt
 is born 0.74 m in front of the eye. Third person is untouched.
+
+### The ocean was nailed to the world origin
+
+`ocean.update` carried the comment "Snap the disc under the camera in XZ" directly above
+`mesh.position.set(0, 0, 0)`. The disc is radial — ring radius grows as `t^3.1` out to
+20 km, so vertex spacing runs from about a metre in the middle to hundreds of metres at
+the rim — and pinned to the origin that dense middle sits under the HOUSE.
+
+Fly to the town 3.6 km away and the water under you is sampled every ~148 m (from the
+geometry: `d(rad)/dr` at that radius), which is coarser than the waves are long. Every
+frame lands on a different set of crests, and the sea crawls and sparkles: correct at the
+spawn, falling apart exactly as you fly, which is what was reported.
+
+The disc follows the camera now, snapped to a 2 m grid rather than followed continuously —
+the wave field is evaluated in WORLD space in the vertex shader, so a disc sliding a
+fraction of a metre per frame moves every vertex to a new place on the wave and swims. On a
+grid the sample points are stable. Measured after: nearest vertex 0.1 m at home, 0.0 m at
+3.6 km out.
