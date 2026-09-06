@@ -53,6 +53,7 @@ export default {
     let viewBeforeDoff = null; // ...and the same for stepping out of an armour
     let gantry = null;
     let hold = 0;              // seconds the stage lights stay up after the suit closes
+    let boyOut = false;        // the pilot has been lifted out of the suit group — see below
     const stage = new SuitStage(ctx);
     const _at = new THREE.Vector3();
 
@@ -63,6 +64,75 @@ export default {
       if (stand) { stage.place(stand.pos, stand.yaw); return; }
       ctx.suit.root.getWorldPosition(_at);
       stage.place(_at, ctx.suit.root.rotation.y);
+    }
+
+    /* ── THE BOY IS INSIDE THE SUIT GROUP, AND THAT IS WHY TAKING IT OFF NEVER WORKED ──
+     *
+     * suit/suit.js hangs `pilot_body_holder` off `suit.root`, because normally an armour
+     * is closing around him and the two must never drift apart by so much as a millimetre.
+     * `followPlayer` is what walks that whole group to the player's stance.
+     *
+     * A doff parks the armour: it sets followPlayer = false so the empty shell stays
+     * standing where you left it. The boy is in the same group, so HE STAYS STANDING IN IT
+     * TOO — inside a suit he has supposedly just climbed out of, three metres behind the
+     * player, not moving when the player walks. Measured before this change, identically on
+     * all five marks (tools/doff-probe.html): after X the pilot's root was 3.00 m from the
+     * player's feet and did not move when he walked, while 11-48 armour meshes sat in front
+     * of the camera. That is every one of Jurek's three reports at once — "I can't see
+     * myself", "I see myself as a different person", and the suit apparently putting itself
+     * straight back on: what the chase camera framed was the parked shell with the pilot
+     * standing inside it, and nothing at all where the player actually was.
+     *
+     * Four previous passes fixed flags around this (the per-frame `state.armor` rewrite,
+     * the step-out distance, the airborne refusal, the menu's attract armour) and every one
+     * of them was real — but none of them moved the boy, so the picture never changed.
+     *
+     * So: when the armour is parked, the pilot is lifted out of the suit group into the
+     * scene and driven from the player's stance; when it is worn again he goes back in.
+     * `pilot_body_holder` keeps its identity either way, so suit.js's showBody / showFace /
+     * bodyVisible all go on working on exactly the object they always worked on.
+     *
+     * NOT done by turning followPlayer back on: the armour rig is in that same group, and
+     * an empty shell that walks around after the player is not furniture, it is a ghost. */
+    function boyHolder() {
+      const b = ctx.suit && ctx.suit.body && ctx.suit.body.root;
+      return b ? b.parent : null;      // pilot_body_holder, wherever it currently hangs
+    }
+    function boyStepOut() {
+      if (boyOut) return;
+      const holder = boyHolder();
+      if (!holder) return;             // he has not finished loading; syncBoy retries
+      ctx.scene.add(holder);           // three removes it from suit.root for us
+      boyOut = true;
+    }
+    function boyStepIn() {
+      if (!boyOut) return;
+      const holder = boyHolder();
+      boyOut = false;
+      if (!holder) return;
+      // Back to the identity transform: inside the group, the boy IS the armour's stance.
+      holder.position.set(0, 0, 0);
+      holder.rotation.set(0, 0, 0);
+      ctx.suit.root.add(holder);
+    }
+    // Called first thing every tick. Two jobs, and the second one is the safety net: any
+    // path that clears `parked` — equip() does, and so does the display-case flow — puts
+    // him back where he belongs without having to know this module exists.
+    function syncBoy() {
+      const parked = ctx.suit && ctx.suit.parked;
+      if (!boyOut) {
+        // He may have loaded after the doff finished, in which case he is still in the
+        // group and still standing in the shell. Take him out now.
+        if (parked && ctx.suit.bodyVisible && boyHolder()) boyStepOut();
+        else return;
+      }
+      if (!parked) { boyStepIn(); return; }
+      const holder = boyHolder();
+      const stand = playerStance(ctx);
+      if (holder && stand) {
+        holder.position.copy(stand.pos);
+        holder.rotation.set(0, stand.yaw, 0);
+      }
     }
 
     const self = {
@@ -112,6 +182,12 @@ export default {
          * opening third — and THEN the wait, with the machine visibly running while it
          * happens. Same seconds, and they now read as the gantry working instead of as a
          * glitch. */
+        // If he was standing outside a parked shell, he is about to be inside an armour
+        // again: put him back in the group before anything is placed, so the ritual is
+        // authored against one transform and not two. (Not left to syncBoy: unequip()
+        // below re-zeroes the holder's local position, which while he is detached would
+        // put him at the world origin for however many seconds the next load takes.)
+        boyStepIn();
         ctx.suit.unequip();                       // whatever was on him is gone, now
         ctx.suit.followPlayer = false;
 
@@ -354,7 +430,21 @@ export default {
       const suit = ctx.suit;
       if (self.playing || doffing || !suit || !suit.parked || !suit.rig) return;
       const id = suit.parked.id;
+      /* THE ARMOUR COMES TO HIM, not the other way round.
+       *
+       * flight/ activates at wherever `suit.root` is standing when 'suitup:done' fires, so
+       * re-entering used to snatch the camera off the boy and put it on the shell — up to
+       * six metres away, measured, if he had walked at all since stepping out. X is meant
+       * to be a toggle you press standing still; the player must not move because he
+       * pressed it. Placing the shell on his stance first means the view does not jump at
+       * all: the armour simply closes around him where he is.
+       *
+       * The F-hold route ends up here too, and there he is already within 2.4 m of it, so
+       * this is at most a small nudge that also squares the suit up with his facing. */
+      const stand = playerStance(ctx);
+      if (stand) suit.place(stand.pos, stand.yaw);
       suit.parked = null;
+      boyStepIn();                           // out of the world, back into the armour
       suit.showBody(false);                  // he is inside it again
       // Back into the view he was in before he stepped out.
       if (viewBeforeDoff) { ctx.state.view = viewBeforeDoff; viewBeforeDoff = null; }
@@ -365,13 +455,19 @@ export default {
       ctx.state.suitClosed = true;
       ctx.state.faceplateOpen = false;
       self.id = id; self.progress = 1;
-      if (viewBefore) { ctx.state.view = viewBefore; viewBefore = null; }
+      /* The view the RITUAL saved is not restored here, and must not be: it belongs to a
+       * suit-up, this is a re-entry, and applying it after viewBeforeDoff above would
+       * overwrite the view the player was actually in when he stepped out. It can only be
+       * non-null after a ritual that neither finished nor cancelled, so drop it. */
+      viewBefore = null;
       ctx.bus.emit('suitup:done', id);
     });
 
     ctx.bus.on('restart', () => {
       { const ring = ctx.world && ctx.world.ring; if (ring) ring.set(0); }
       if (ctx.suit) ctx.suit.parked = null;
+      boyStepIn();
+      doffing = null; self.doffing = false;   // a doff interrupted by R is over, not stuck
       self.cancel();
       stow = 0; hold = 0;
       stage.set(0);
@@ -387,6 +483,9 @@ export default {
 
     // Keep the module's update closure able to see the locals above.
     this._tick = (dt) => {
+      // Where the pilot stands is decided before anything else in the frame, and in every
+      // mode: on foot outside a parked shell he has to be ON the player, not in the suit.
+      syncBoy();
       if (doffing) {
         doffing.t += dt;
         const k = Math.min(1, doffing.t / doffing.dur);
@@ -443,6 +542,13 @@ export default {
               name: SPEC_NAMES[doffing.id] || String(doffing.id).toUpperCase(),
               pos: suit.root.position.clone(),
             };
+            /* AND THE BOY COMES OUT WITH HIM. The shell stays; he does not. See the long
+             * note on boyStepOut above — this one line is the difference between stepping
+             * out of an armour and watching yourself stay inside it. Done AFTER `parked`
+             * is set, because syncBoy() keys off that field. onfoot/'s suitup:doffed
+             * handler, fired below, is what actually moves the player away; syncBoy then
+             * puts the boy on him on the very next tick. */
+            boyStepOut();
           }
           /* SHOW HIM. You have just stepped out of a suit of armour and the whole point of
            * having an avatar is to see it — but in first person there is nothing to see, so
@@ -459,7 +565,10 @@ export default {
           if (ctx.flight && ctx.flight.deactivate) ctx.flight.deactivate();
           self.doffing = false;
           ctx.bus.emit('suitup:doffed', { id: doffing.id });
-          if (ctx.ui) ctx.ui.say('SUIT PARKED. PRESS F TO STEP BACK IN.');
+          // X is the toggle, so X is what the line says. It used to name F, which is the
+          // way back into a shell you did NOT take off yourself — telling the player to
+          // walk somewhere and hold a second key is exactly the "it doesn't work" report.
+          if (ctx.ui) ctx.ui.say('SUIT PARKED. X TO PUT IT BACK ON.');
           doffing = null;
         }
         return;

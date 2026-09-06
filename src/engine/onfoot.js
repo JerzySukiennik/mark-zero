@@ -267,7 +267,24 @@ export default {
     let rackLit = true;   // the case lights start in the graph; the first step takes them out
     let suitupWatch = -1, sawSuitup = false, saidDescend = false, saidWorkshop = false;
     ctx.bus.on('suitup:start', () => { sawSuitup = true; });
-    ctx.bus.on('suitup:done', () => { sawSuitup = true; });
+    /* AN ARMOUR IS ON HIM: STOP DRIVING, BY EVERY ROUTE.
+     *
+     * 'suitup:done' is what the whole game means by "the suit is on" — the end of a ritual
+     * and the end of a re-entry both emit it. The ritual route stood this module down in
+     * startSuitup(), and the F-hold route did it by hand, but X (main.js) emits
+     * 'suit:reenter' straight from the keyboard, so after putting the armour back on with X
+     * onfoot still had `active` true and still believed it was steering the boy. Doing it
+     * here instead of on 'suit:reenter' is deliberate: bus order between two modules is
+     * not something either of them should have to know, and suitup/ clears `parked` inside
+     * its own handler, so a listener that tested it could read either answer. */
+    ctx.bus.on('suitup:done', () => {
+      sawSuitup = true;
+      api.active = false;
+      api.ownsCamera = false;
+      chosen = null; hold = 0; holdTarget = null; approach = -1;
+      doffGrace = 0;
+      if (ctx.ui) ctx.ui.prompt(null);
+    });
 
     // Debug: MZ.wear() puts you in the suit with no ritual. suit/ owns the model; this
     // side owns leaving on-foot mode and remembering which one you took.

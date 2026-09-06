@@ -305,7 +305,17 @@ export default {
             bh.updateWorldMatrix(true, false);
             const a = new THREE.Vector3().setFromMatrixPosition(ah.matrixWorld);
             const b = new THREE.Vector3().setFromMatrixPosition(bh.matrixWorld);
-            bodyGroup.position.add(a.sub(b));
+            /* ONLY WHILE HE IS INSIDE THE ARMOUR.
+             *
+             * This nudge lines the boy's head up with the helmet's, and it is a LOCAL offset
+             * that only means that while `bodyGroup` hangs inside `suit.root`. When an
+             * armour is parked, suit/suitup.js lifts the holder out into the scene so the
+             * boy can walk away from the shell he left standing — and then the same numbers
+             * are a world position, and adding to them throws him across the map. Nothing
+             * reaches here while parked today (it is behind `state.suitClosed`, which is
+             * false then), but this is the kind of coupling that gets rediscovered the hard
+             * way, so it says so out loud. */
+            if (!api.parked) bodyGroup.position.add(a.sub(b));
             api._headFit = fit;
           }
           if (!faceLight) {
@@ -320,7 +330,7 @@ export default {
           faceLight.visible = true;
         } else {
           bodyRig.root.traverse(o => { if (o.isMesh) o.visible = true; });
-          bodyGroup.position.set(0, 0, 0);
+          if (!api.parked) bodyGroup.position.set(0, 0, 0);   // local offset; see above
           // Undo the helmet fit, or the whole boy walks around with a shrunken head the
           // next time he is shown outside a suit.
           const bh2 = bodyRig.pivots && bodyRig.pivots.piv_head;
@@ -429,7 +439,13 @@ export default {
         if (wantFace !== api.faceVisible) api.showFace(wantFace);
       }
     }
-    if (api.body && api.bodyVisible) api.body.updatePose(dt);
+    /* The SCALE is applied whether or not he is on screen. It used to sit behind the
+     * visibility test, which is a loop with no way in: he is drawn at the wrong size, and
+     * the code that would correct the size only runs once he is being drawn correctly. */
+    if (api.body) {
+      if (api.bodyVisible) api.body.updatePose(dt);
+      fitBodyToArmour(api, ctx);
+    }
     if (api.nano) api.nano.update(dt);
 
     if (api.followPlayer && ctx.state.mode !== 'flight') {
@@ -509,6 +525,62 @@ function normaliseGlow(rig, id) {
 // it actually publishes: `position` is his feet, `player.yaw` is his look direction.
 // (Guessing `player.object.position` silently left the armour parked at the world origin
 // while he stood in the workshop 91 m up — the sequences all played to an empty room.)
+
+/* Joints the boy copies from the armour while he is inside it. A fixed list, module-level,
+ * so the per-frame loop allocates nothing. */
+const BODY_FOLLOW = [
+  'piv_chest', 'piv_neck', 'piv_head',
+  'piv_shoulderL', 'piv_elbowL', 'piv_shoulderR', 'piv_elbowR',
+  'piv_hipL', 'piv_kneeL', 'piv_hipR', 'piv_kneeR',
+];
+
+/* THE BOY INSIDE THE SUIT: HIS SIZE, AND WHAT HIS LIMBS DO.
+ *
+ * Two faults Jurek reported together, because on screen they look like one:
+ *
+ *   "ten avatar jest za duzy w srodku... przechodzi przez te rzeczy, wiec nie widac troche
+ *   stroju" — he is scaled to 1.95 m by loadPilot(), which is the height of the ARMOUR
+ *   SHELL. A body the same size as the shell around it has nowhere to be except through it.
+ *   The comment there even says he is "the INTERIOR of a 1.95 m shell" and then makes him
+ *   the full 1.95. He has to be smaller than the thing enclosing him.
+ *
+ *   "jak rusza nogami ten stroj, to zostaja te nogi tego avatara w takiej pozie prostej" —
+ *   nothing was driving his joints. His rig holds whatever pose it was last set to while
+ *   the armour walks, so his legs stay straight inside moving armour and stick out of it.
+ *   Both rigs are built from the same pivot hierarchy on purpose (models/pilot-build.py:
+ *   "only the scale differs"), so the armour's joint rotations apply to him directly.
+ *
+ * Outside the armour he is the avatar and wants his own real height, 1.58 m — a
+ * 13-year-old, not a 1.95 m adult. Both cases are one uniform scale on his root, about his
+ * feet, which is where the contract puts the origin.
+ */
+const PILOT_BUILD_H = 1.95;      // what loadPilot() normalises him to
+const PILOT_REAL_H = 1.58;       // Jurek's actual height: the avatar on foot
+const PILOT_INSIDE = 0.86;       // of the shell, so the armour has room around him
+
+function fitBodyToArmour(api, ctx) {
+  const body = api.body;
+  if (!body || !body.root) return;
+  /* "Inside" means an armour is actually BEING WORN — not merely loaded. A rig can be
+   * loaded and standing on the floor (parked), or left over from the menu's attract, while
+   * the player is walking around in his own clothes. Keying off `api.rig` alone made him
+   * 1.68 m on foot instead of his own 1.58, because some armour or other is usually in
+   * memory. */
+  const inside = !!ctx.state.armor && !!api.rig && !api.parked;
+  const want = inside ? PILOT_INSIDE : (PILOT_REAL_H / PILOT_BUILD_H);
+  if (body.root.scale.x !== want) body.root.scale.setScalar(want);
+  if (!inside) return;
+  // His limbs are the armour's limbs. Copying rotations (never positions) keeps his own
+  // proportions and costs eleven quaternion copies a frame.
+  const bp = body.pivots, ap = api.rig.pivots;
+  if (!bp || !ap) return;
+  for (let i = 0; i < BODY_FOLLOW.length; i++) {
+    const n = BODY_FOLLOW[i];
+    const b = bp[n], a = ap[n];
+    if (b && a) b.quaternion.copy(a.quaternion);
+  }
+}
+
 export function playerStance(ctx) {
   const pl = ctx.player;
   if (!pl) return null;
