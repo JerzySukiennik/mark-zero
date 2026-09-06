@@ -1,0 +1,58 @@
+{
+  "rules": {
+    ".read": false,
+    ".write": false,
+
+    "rooms": {
+      "$code": {
+        ".read":  "$code.matches(/^[A-Z0-9]{4,8}$/)",
+        ".write": false,
+
+        "meta": {
+          ".write": "$code.matches(/^[A-Z0-9]{4,8}$/) && (!data.exists() || newData.exists())",
+          "createdAt": { ".validate": "newData.isNumber()" },
+          "$other":    { ".validate": false }
+        },
+
+        "players": {
+          "$wid": {
+            ".write": "$code.matches(/^[A-Z0-9]{4,8}$/) && $wid.matches(/^[A-Za-z0-9_-]{6,48}$/)",
+            ".validate": "newData.hasChildren(['t','p'])",
+
+            "t":  { ".validate": "newData.isNumber()" },
+            "n":  { ".validate": "newData.isString() && newData.val().length <= 16" },
+            "a":  { ".validate": "newData.isString() && newData.val().length <= 8" },
+            "h":  { ".validate": "newData.isNumber() && newData.val() >= 0 && newData.val() <= 1000" },
+            "th": { ".validate": "newData.isNumber()" },
+
+            "p": { "$i": { ".validate": "newData.isNumber()" }, ".validate": "newData.hasChildren(['0','1','2'])" },
+            "q": { "$i": { ".validate": "newData.isNumber()" } },
+            "v": { "$i": { ".validate": "newData.isNumber()" } },
+
+            "$other": { ".validate": false }
+          }
+        },
+
+        "events": {
+          "$eid": {
+            ".write": "$code.matches(/^[A-Z0-9]{4,8}$/) && !data.exists()",
+            ".validate": "newData.hasChildren(['kind','at'])",
+            "kind": { ".validate": "newData.isString() && newData.val().length <= 16" },
+            "at":   { ".validate": "newData.isNumber()" },
+            "from": { ".validate": "newData.isString() && newData.val().length <= 48" },
+            "i":    { ".validate": "newData.isString() && newData.val().length <= 48" },
+            "p": {
+              "power": { ".validate": "newData.isNumber()" },
+              "o": { "$i": { ".validate": "newData.isNumber()" } },
+              "d": { "$i": { ".validate": "newData.isNumber()" } },
+              "$other": { ".validate": false }
+            },
+            "$other": { ".validate": false }
+          }
+        },
+
+        "$other": { ".validate": false }
+      }
+    }
+  }
+}

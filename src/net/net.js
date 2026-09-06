@@ -25,6 +25,7 @@
 import * as THREE from 'three';
 import { NET } from './config.js';
 import { createLocalDriver } from './driver-local.js';
+import { createFirebaseDriver } from './driver-firebase.js';
 import { RemotePlayers } from './remote.js';
 
 const _p = new THREE.Vector3();
@@ -115,7 +116,18 @@ export function installNet(ctx) {
       code = String(roomCode || '').toUpperCase().trim();
       if (code.length < 4) { code = null; return null; }
       remotes = new RemotePlayers(ctx);
-      driver = createLocalDriver();
+      /* WHICH TRANSPORT.
+       *
+       * Firebase for real players on real machines; the BroadcastChannel driver for tabs on
+       * this one. The local driver is not a fallback for a broken network — it is how every
+       * networked feature gets built and verified without touching a live database, so it
+       * stays reachable on purpose with ?mznet=local.
+       *
+       * EventSource is the one thing the Firebase driver cannot do without, so a browser
+       * that lacks it drops to local rather than failing silently. */
+      const want = new URLSearchParams(location.search).get('mznet');
+      const canRemote = typeof EventSource === 'function' && want !== 'local';
+      driver = canRemote ? createFirebaseDriver() : createLocalDriver();
       driver.on('players', map => {
         // Whoever is in the map is in the sky; whoever left it is not.
         for (const [id, s] of map) remotes.push(id, s);

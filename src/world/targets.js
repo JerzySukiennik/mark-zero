@@ -78,14 +78,60 @@ export function buildTargets(ctx, handoff, opts = {}) {
     // Deliberately NOT solid. A gate you can crash into is a gate nobody flies through.
   }
 
+  /* SHOOTING THEM DOWN.
+   *
+   * They were solid, so bolts collided with them and the fracture system ran — but a drone
+   * is a small floating object, not a wall, and "a crack appeared in it" is not what anyone
+   * expects from hitting one. Jurek asked for them to be knock-downable, so a hit kills the
+   * drone: it goes dark, drops out of the sky under gravity, and is gone.
+   *
+   * Driven off `repulsor:hit`, which the projectile system already emits with a world point,
+   * rather than off a collider identity — the bolt reports where it landed and this decides
+   * whether that was close enough to a drone to count. One distance test per hit against at
+   * most a couple of dozen drones costs nothing and needs no new physics. */
+  const falling = [];
+  ctx.bus.on('repulsor:hit', ({ point, force }) => {
+    if (!point) return;
+    let best = null, bestD = 4.2;                 // a drone is ~2 m across; be generous
+    for (const d of drones) {
+      if (d.dead || !d.g.parent) continue;
+      const dd = d.g.position.distanceTo(point);
+      if (dd < bestD) { bestD = dd; best = d; }
+    }
+    if (!best) return;
+    best.hp = (best.hp === undefined ? 2 : best.hp) - Math.max(1, force || 1);
+    if (best.hp > 0) return;
+    best.dead = true;
+    // Dark, tumbling, and on its way down.
+    best.g.traverse(o => { if (o.material === lamp) o.visible = false; });
+    best.vel = new THREE.Vector3((Math.random() - 0.5) * 6, 1.5, (Math.random() - 0.5) * 6);
+    best.spin = new THREE.Vector3(Math.random() * 3, Math.random() * 3, Math.random() * 3);
+    falling.push(best);
+    ctx.bus.emit('target:down', { point: best.g.position.clone() });
+  });
+
   return {
     root, drones, gates,
+    get alive() { return drones.filter(d => !d.dead).length; },
     /** Bob and spin. Cheap: two trig calls per drone, nothing allocated. */
     update(dt, t) {
       for (const d of drones) {
-        if (!d.g.parent) continue;
+        if (!d.g.parent || d.dead) continue;
         d.g.position.y = d.y0 + Math.sin(t * d.rate + d.phase) * 3.5;
         d.g.rotation.y += dt * 0.6;
+      }
+      // The ones that were shot: gravity, tumble, and gone when they reach the plate.
+      for (let i = falling.length - 1; i >= 0; i--) {
+        const d = falling[i];
+        d.vel.y -= 22 * dt;
+        d.g.position.addScaledVector(d.vel, dt);
+        d.g.rotation.x += d.spin.x * dt;
+        d.g.rotation.y += d.spin.y * dt;
+        d.g.rotation.z += d.spin.z * dt;
+        if (d.g.position.y <= GROUND + 1) {
+          if (d.g.parent) d.g.parent.remove(d.g);
+          falling.splice(i, 1);
+        }
       }
       for (let i = 0; i < gates.length; i++) gates[i].rotation.z += dt * 0.12;
     },

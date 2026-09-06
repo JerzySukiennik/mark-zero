@@ -348,10 +348,21 @@ export class FlightModel {
     this.quaternion.copy(_q);
     this.omega.set(0, 0, 0);
 
-    // Armour is heavy. 2.2 m/s, 4.5 running — faster reads as skating, and the footstep
-    // takes Jurek supplied were cut from a walk at about two steps a second.
+    /* A POWERED EXOSKELETON IS FASTER THAN A BOY, NOT SLOWER.
+     *
+     * This was 2.2 m/s walking and 4.5 running. On foot, out of the armour, the same player
+     * walks at 2.55 and runs at 4.6 — so putting on a suit of powered armour made you SLOWER
+     * than you were in a T-shirt. Jurek on the Mk L: "nie da sie chodzic tym najlepszym
+     * strojem, bo on po prostu mega wolno idzie". He is not describing a preference, he is
+     * describing a suit that is worse than no suit.
+     *
+     * Scaled by the armour's own reactor output, so the Mk L (power 1.25) strides and the
+     * Mk I (0.8) trudges — the difference between the Marks is meant to be felt on the
+     * ground as well as in the air. The stride clock below is derived from speed, so the
+     * footsteps stay in step with the legs at any of these. */
     const run = cmd.boost > 0 ? 1 : 0;
-    const target = run ? 4.5 : 2.2;
+    const pw = 0.55 + 0.45 * (spec.power || 1);          // 0.91 for a Mk I, 1.11 for a Mk L
+    const target = (run ? 8.6 : 4.3) * pw;
     _v.set(cmd.lateral || 0, 0, -(cmd.forward || 0));
     if (_v.lengthSq() > 1e-6) _v.normalize().multiplyScalar(target);
     _v.applyQuaternion(this.quaternion);
