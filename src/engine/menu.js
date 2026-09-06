@@ -369,10 +369,28 @@ export function installMenu(ctx, { onStart }) {
          * choosing — and tearing that one off because the poster finally finished loading is
          * a worse bug than the one this branch exists to fix. Ours means: still the attract's
          * mk3, nobody has a suit on, and no ritual is running. */
-        const mine = ctx.suit && ctx.suit.id === 'mk3' && !ctx.state.armor &&
-                     ctx.state.mode !== 'suitup' &&
-                     !(ctx.suitup && (ctx.suitup.playing || ctx.suitup.doffing));
-        if (mine && ctx.suit.unequip) { ctx.suit.unequip(); ctx.state.armor = null; }
+        /* OWNERSHIP IS THE TICKET, NOT `state.armor`.
+         *
+         * This condition used to include `!ctx.state.armor`, which looks like the right
+         * guard and is exactly backwards: `equip()` sets `ctx.state.armor = id` itself as
+         * its last act, so by the time control returns here the field ALWAYS names this
+         * armour. The clean-up could therefore never fire in the one case it exists for —
+         * a poster armour finishing after the player has already started the game — and the
+         * player walked out of the menu "wearing" a Mk III he had never put on. Everything
+         * downstream believes that field: the HUD, the flight model, and X, which then had
+         * a suit to take off that was not on anybody.
+         *
+         * The ticket already says whose load this is. What it cannot say is whether the
+         * player has since chosen an armour of his own, so that is what the rest tests: a
+         * ritual in progress, or a game already handed over to flight, is not ours to touch.
+         */
+        const busy = ctx.suitup && (ctx.suitup.playing || ctx.suitup.doffing);
+        const claimed = busy || ctx.state.mode === 'suitup' || ctx.state.mode === 'flight';
+        if (!claimed && ctx.suit && ctx.suit.unequip) {
+          ctx.suit.unequip();
+          ctx.state.armor = null;
+          ctx.state.suitClosed = false;
+        }
         return;
       }
       if (ctx.flight) {
