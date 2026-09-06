@@ -90,6 +90,62 @@ export class ThrustFX {
     }
 
     this.trails = [this._makeTrail(), this._makeTrail()];
+
+    /* THE MARK L's WING ARRAY.
+     *
+     * Jurek's reference for the nano suit is the one with two big angled thruster blades
+     * standing off the shoulders, and he wants them to GROW out of the armour when he
+     * holds the trigger — nanotech doing what nanotech is for. Only the Mk L has them;
+     * the other four are plate armour and have nowhere to grow them from.
+     *
+     * Deliberately cheap: two blades and two plumes, built once when a Mk L is worn and
+     * parented to the chest so they follow the pose for free. They are scaled from zero,
+     * so when they are not out they cost one matrix each.
+     */
+    this.wings = [];
+    this.wingOut = 0;
+    // A blade: wide at the root, tapering back and out. Built pointing down -Z (the
+    // suit's forward) and then swept back per side when it is placed.
+    this.wingGeo = new THREE.BufferGeometry();
+    {
+      const v = new Float32Array([
+        0, 0, 0,   0.05, 0.34, 0.30,   0.05, -0.16, 0.30,
+        0.05, 0.34, 0.30,   0.02, 0.20, 1.15,   0.05, -0.16, 0.30,
+        0.05, -0.16, 0.30,  0.02, 0.20, 1.15,   0.02, -0.04, 1.15,
+      ]);
+      this.wingGeo.setAttribute('position', new THREE.BufferAttribute(v, 3));
+      this.wingGeo.computeVertexNormals();
+    }
+    this.mWing = new THREE.MeshStandardMaterial({
+      color: 0x6d1620, metalness: 0.95, roughness: 0.28, side: THREE.DoubleSide,
+      emissive: new THREE.Color(0x2a90ff), emissiveIntensity: 0,
+    });
+  }
+
+  _buildWings(rig) {
+    const chest = rig.pivots.piv_chest || rig.pivots.piv_hips;
+    if (!chest) return;
+    for (const side of [-1, 1]) {
+      const root = new THREE.Group();
+      root.position.set(side * 0.20, 0.16, 0.06);
+      root.rotation.set(-0.20, side * 0.42, side * -0.30);
+      root.scale.setScalar(0.001);
+      const blade = new THREE.Mesh(this.wingGeo, this.mWing);
+      blade.scale.set(side, 1, 1);            // mirror the profile for the left side
+      blade.frustumCulled = false;
+      root.add(blade);
+      // The array's own exhaust, off the trailing tip.
+      const core = new THREE.Mesh(this.coneGeo, this.mCore);
+      const bloom = new THREE.Mesh(this.coneGeo, this.mBloom);
+      for (const o of [core, bloom]) {
+        o.position.set(side * 0.02, 0.08, 1.12);
+        o.rotation.x = -Math.PI / 2;          // fire backwards, along +Z
+        o.frustumCulled = false;
+        root.add(o);
+      }
+      chest.add(root);
+      this.wings.push({ root, blade, core, bloom, side });
+    }
   }
 
   // ---- ribbons ------------------------------------------------------------------------
@@ -169,8 +225,11 @@ export class ThrustFX {
       if (e.glow.parent) e.glow.parent.remove(e.glow);
     }
     this.emitters.length = 0;
+    for (const w of this.wings) if (w.root.parent) w.root.parent.remove(w.root);
+    this.wings.length = 0;
     this.attachedTo = rig || null;
     if (!rig || !rig.pivots) return;
+    if (rig.id === 'mk50') this._buildWings(rig);
     for (const spec of EMITTERS) {
       const piv = rig.pivots[spec.pivot];
       if (!piv) continue;
@@ -196,6 +255,8 @@ export class ThrustFX {
     this.root.visible = on;
     if (!on) {
       for (const e of this.emitters) { e.core.visible = e.bloom.visible = e.glow.visible = false; }
+      for (const w of this.wings) w.root.visible = false;
+      this.wingOut = 0;
       for (const l of this.lights) l.intensity = 0;
       for (const t of this.trails) { t.pts.length = 0; t.mesh.geometry.setDrawRange(0, 0); }
       return;
@@ -242,6 +303,27 @@ export class ThrustFX {
       e.node.getWorldPosition(_v);
       l.position.copy(_v);
       l.intensity = e.level * 11;
+    }
+
+    // The Mk L's wing array: out while the trigger is held, and only then.
+    if (this.wings.length) {
+      const want = cmd.fire ? 1 : 0;
+      // Slower out than in — deploying reads as something being built, retracting as
+      // something being dismissed.
+      const k = want > this.wingOut ? 1 - Math.exp(-dt / 0.18) : 1 - Math.exp(-dt / 0.09);
+      this.wingOut += (want - this.wingOut) * k;
+      const outv = this.wingOut;
+      for (const w of this.wings) {
+        const vis = outv > 0.01;
+        w.root.visible = vis;
+        if (!vis) continue;
+        // Grows lengthwise first, then fills out: nanotech running along a spar.
+        w.root.scale.set(0.35 + outv * 0.65, 0.35 + outv * 0.65, Math.pow(outv, 0.6));
+        const lvl = outv * (0.9 + 0.2 * Math.sin(this.ctx.time * 31 + w.side));
+        w.core.scale.set(0.030, 0.34 * lvl, 0.030);
+        w.bloom.scale.set(0.075, 0.62 * lvl, 0.075);
+      }
+      this.mWing.emissiveIntensity = outv * 1.35;
     }
 
     // Trails. Born at 40 m/s so hovering around the workshop is clean, full width by 55%

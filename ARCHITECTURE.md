@@ -514,3 +514,27 @@ meaningful mapping for the inside of a solid that was only mapped on its skin. S
 `debris.js` gives any piece with no UVs a **map-less clone** of its material, one per
 source material and cached, darkened slightly because a diffuse map is usually darker than
 the white it multiplies. Pieces that did keep their UVs keep the real texture.
+
+### Ground mode was throwing on every walking tick
+
+`stepWalk` ended with `this.speed = sp`, and `speed` is a **getter** on `FlightModel`
+(`get speed() { return this.velocity.length(); }`). Assigning to it throws, and
+`engine/loop.js` wraps every module update in a try/catch — so the exception was swallowed
+120 times a second and the entire flight module update stopped running for as long as the
+player was walking. Everything downstream of it (poses, the plumes, the camera rig's flight
+branch) silently stopped with it, and ground mode still *looked* like it worked.
+
+It surfaced only because `tools/opt-check.html` started forwarding `console.error` out of
+the iframe while chasing an unrelated feature. That forwarding is now part of the rig and
+should stay: a game that catches its own module errors needs something that shouts about
+them, or a broken subsystem reads as a subtle gameplay complaint instead of a stack trace.
+
+### The Mark L's wing array
+
+The nano suit grows two angled thruster blades off the chest while the trigger is held —
+Jurek's reference frame for that armour, and the one thing only the nano suit can plausibly
+do. Two blades and two plumes, built once when a Mk L is worn, parented to `piv_chest` so
+they follow the pose for free, scaled from zero so they cost one matrix each when stowed.
+Deploy is slower than retract (0.18 s against 0.09 s): growing reads as something being
+built, snapping back as something being dismissed. Verified: built 2 on the Mk L and 0 on
+the Mk III, out to 1.0 while held, back to 0.0 on release.

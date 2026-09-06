@@ -320,7 +320,10 @@ export class FlightModel {
     this.walkSpeed = sp;
     this.walkPhase = ((this.walkPhase || 0) + (sp / 1.4) * Math.PI * 2 * dt) % (Math.PI * 2);
 
-    this.speed = sp;
+    // NOT `this.speed = sp` — speed is a getter derived from the velocity, and assigning
+    // to it throws. That exception killed the whole flight module update on every walking
+    // tick, silently, because the loop wraps module updates in a try/catch: ground mode
+    // looked like it worked and nothing downstream of flight ran at all.
     this.thrustMag = 0;
     this.throttle = 0;
     this.mode = 'GROUND';
