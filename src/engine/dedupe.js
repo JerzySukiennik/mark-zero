@@ -130,6 +130,7 @@ import { mergeGeometries } from '../../vendor/three-addons/utils/BufferGeometryU
 
 const ANIMATED = /gantry|stand|case|tablet|nano|suit|light|glow|screen/i;
 const _m = new THREE.Matrix4();
+const _v = new THREE.Vector3();
 
 function mergeable(o, allowNamed) {
   if (!o.isMesh || Array.isArray(o.material) || !o.material) return false;
@@ -218,7 +219,33 @@ export function mergeStatic(root, minGroup = 6, opts = {}) {
     if (!o.isMesh) return;
     before.push(o);
     if (!mergeable(o, opts.allowNamed)) return;
-    const key = o.material.uuid + '|' + (o.castShadow ? 1 : 0) + '|' + (o.receiveShadow ? 1 : 0);
+    /* Keyed on material AND on a coarse spatial cell.
+     *
+     * Merging by material alone produces batches that span whole districts: the town's
+     * 2366 meshes collapsed into NINE, each covering about a kilometre, and a batch is
+     * frustum-culled as one object — so every one of them drew whenever any corner of the
+     * town was on screen. Measured: flying out to sea with the entire headland behind the
+     * camera went from 70 draw calls to 162 after that bake. Fewer, bigger batches is not
+     * automatically better; past the point where they stop being cullable it is worse.
+     *
+     * A cell of `cellSize` metres keeps batches local, so looking away from a district
+     * throws it out again. It costs more batches than the naive version and far fewer than
+     * no merge at all, which is the whole point.
+     *
+     * 120 m, and the number was measured rather than picked. Flying out to sea with the
+     * headland behind the camera, and flying back at it from 600 m:
+     *
+     *     no spatial split   sea 162 calls   land 1417
+     *     250 m cells        sea 162 calls   land 1549     (a town-sized cell is no cell)
+     *     120 m cells        sea  56 calls   land 1539
+     *
+     * The trade is +122 calls on the one frame that has the entire world in it against
+     * -106 on every frame that does not, and the second kind is most of them. */
+    _v.setFromMatrixPosition(o.matrixWorld);
+    const cs = opts.cellSize || 120;
+    const cell = Math.floor(_v.x / cs) + ',' + Math.floor(_v.y / cs) + ',' + Math.floor(_v.z / cs);
+    const key = o.material.uuid + '|' + (o.castShadow ? 1 : 0) + '|' + (o.receiveShadow ? 1 : 0) +
+                '|' + cell;
     let a = groups.get(key);
     if (!a) groups.set(key, a = []);
     a.push(o);

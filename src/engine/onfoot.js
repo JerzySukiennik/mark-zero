@@ -2044,7 +2044,7 @@ async function upgradeCaseFigures(ctx, cases) {
        * see the note in dedupe.js. */
       root.updateMatrixWorld(true);
       let baked = null;
-      try { baked = mergeStatic(root, 2, { allowNamed: true }); } catch (e) { /* keep the suit */ }
+      try { baked = mergeStatic(root, 2, { allowNamed: true, cellSize: 1e6 }); } catch (e) { /* keep the suit */ }
       c.real = root;
       c.figure = root;
       report[c.id] = 'ok h=' + h.toFixed(2) +
@@ -2128,7 +2128,7 @@ function buildSilhouette(a) {
    * = false` when the real armour model arrives to take its place. Collapse the parts into
    * the same group and that reference still means what it meant. Collapse them into the
    * rack and it silently stops hiding anything. */
-  try { mergeStatic(g, 2); } catch (e) { /* a rack that draws slowly still draws */ }
+  try { mergeStatic(g, 2, { cellSize: 1e6 }); } catch (e) { /* a rack that draws slowly still draws */ }
   return g;
 }
 

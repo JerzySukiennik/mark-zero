@@ -814,3 +814,29 @@ a win from it.
 the flight model and every subsequent "living / stairs / workshop" reading is really the same
 airborne frame — three identical numbers in a row is the tell. Measure the indoor spots
 BEFORE `MZ.fly()`, which is what the valid figures in the table above were taken with.
+
+### Batches have to be spatially coherent, or they stop being cullable
+
+Merging by material alone produced batches that span whole districts — the town's 2366
+meshes became **nine**, each about a kilometre across. A batch is frustum-culled as one
+object, so all nine drew whenever any corner of the town was on screen. That was a
+regression I introduced and did not notice until re-measuring a viewpoint I had measured
+before: flying out to sea with the entire headland *behind* the camera went from 70 draw
+calls to 162.
+
+`mergeStatic` keys on material **and** a coarse spatial cell now. The cell size was measured,
+not chosen:
+
+    no spatial split   out to sea 162 calls   at the land 1417
+    250 m cells        out to sea 162 calls   at the land 1549   (a town-sized cell is no cell)
+    120 m cells        out to sea  56 calls   at the land 1539
+
+120 m it is: +122 calls on the single frame that contains the entire world, against −106 on
+every frame that does not, and the second kind is most of them. Out to sea is now better than
+it was before any of this baking started.
+
+The display suits and the silhouettes pass `cellSize: 1e6` — each is one object a metre
+across, and splitting it spatially would only make batches nobody can cull separately anyway.
+
+**The general lesson: fewer, bigger batches is not automatically better.** Past the point
+where a batch stops fitting in a frustum test, it is worse.
