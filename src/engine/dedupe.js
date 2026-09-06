@@ -131,9 +131,9 @@ import { mergeGeometries } from '../../vendor/three-addons/utils/BufferGeometryU
 const ANIMATED = /gantry|stand|case|tablet|nano|suit|light|glow|screen/i;
 const _m = new THREE.Matrix4();
 
-function mergeable(o) {
+function mergeable(o, allowNamed) {
   if (!o.isMesh || Array.isArray(o.material) || !o.material) return false;
-  if (o.name) return false;
+  if (o.name && !allowNamed) return false;
   if (o.children.length) return false;
   if (!o.visible) return false;
   const u = o.userData || {};
@@ -177,11 +177,16 @@ function normalise(mesh, toLocal) {
 
 /**
  * @param root  subtree to bake — pass the smallest thing that helps, not the whole scene.
+ * @param opts.allowNamed  merge named meshes too. OFF by default and it should stay off:
+ *        a name is the only sign this file has that something looked a mesh up once and
+ *        may again. Turn it on only where the caller can say for certain that nothing
+ *        walks the subtree by name — the armour display cases are such a place, because
+ *        they are clones nobody reads back.
  * @param minGroup  do not bother below this many meshes; a merge of two costs a draw call
  *                  either way and loses their individual frustum culling.
  * @returns {{before:number, merged:number, batches:number, left:number}}
  */
-export function mergeStatic(root, minGroup = 6) {
+export function mergeStatic(root, minGroup = 6, opts = {}) {
   /* Verified on GEOMETRY, not on pixels.
    *
    * A pixel A/B of this is worthless: the scene animates — glowing screens, the reactor's
@@ -212,7 +217,7 @@ export function mergeStatic(root, minGroup = 6) {
   root.traverse(o => {
     if (!o.isMesh) return;
     before.push(o);
-    if (!mergeable(o)) return;
+    if (!mergeable(o, opts.allowNamed)) return;
     const key = o.material.uuid + '|' + (o.castShadow ? 1 : 0) + '|' + (o.receiveShadow ? 1 : 0);
     let a = groups.get(key);
     if (!a) groups.set(key, a = []);

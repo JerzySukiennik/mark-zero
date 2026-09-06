@@ -2035,9 +2035,20 @@ async function upgradeCaseFigures(ctx, cases) {
       root.traverse(o => { if (o.isMesh) { o.castShadow = false; o.receiveShadow = false; } });
       if (c.figure) c.figure.visible = false;
       c.group.add(root);
+      /* BAKE THE DISPLAY SUIT. Each of these is a full armour — about 120 named plates —
+       * standing perfectly still behind glass, and five of them are more than half of
+       * everything the workshop submits. `allowNamed` is safe HERE and nowhere else: this
+       * is a clone(true) that nothing ever reads back by plate name (the wearable rig has
+       * its own), and the clone SHARES geometry with the copy suit/ equips, which is
+       * exactly why mergeStatic must never free a geometry something still points at —
+       * see the note in dedupe.js. */
+      root.updateMatrixWorld(true);
+      let baked = null;
+      try { baked = mergeStatic(root, 2, { allowNamed: true }); } catch (e) { /* keep the suit */ }
       c.real = root;
       c.figure = root;
-      report[c.id] = 'ok h=' + h.toFixed(2);
+      report[c.id] = 'ok h=' + h.toFixed(2) +
+        (baked ? ' baked ' + baked.before + '->' + baked.left : '');
     } catch (e) {
       report[c.id] = 'ERR ' + (e && e.message);
       console.warn('[onfoot] case model ' + c.id + ' not upgraded', e);

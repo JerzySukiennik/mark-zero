@@ -766,3 +766,31 @@ nothing surviving still points at them. The report says it was not hypothetical:
 
 Verified after the fix: 2224 meshes in the scene, **0 with no position attribute**, and a
 worn Mk III has all 37 plates with drawable geometry.
+
+### Baking the five suits behind the glass
+
+The rack refused to merge because its meshes are named, and they are named because the cases
+hold **real armour models** — `gltf.scene.clone(true)`, about 120 named plates each. Five of
+them standing perfectly still behind glass were more than half of everything the workshop
+submitted.
+
+`mergeStatic` takes `allowNamed` now, and it is used in exactly one place. The argument that
+it is safe there and nowhere else:
+
+* nothing ever reads a display suit back by plate name — the wearable rig has its own;
+* the clone **shares geometry** with the copy `suit/` equips, which is precisely why the
+  disposal rule above (free only what nothing else points at) had to be fixed first. Without
+  it, baking the cases would have blanked the suit the player puts on.
+
+    mk1  131 -> 8    mk2  97 -> 7    mk3  106 -> 8    mk42  99 -> 9    mk50  86 -> 6
+
+| where | before the session | now |
+|---|---|---|
+| **workshop** | 1373 calls / 1 901 063 tris | **256 calls / 695 453 tris** |
+| **stairwell** | 1795 calls | **477 calls** |
+| living room | 145 calls | 128 calls |
+| ONFOOT meshes | 371 | 63 |
+
+Triangles rise a little where a batch culls as one object; that is the trade, and it is the
+right way round on a scene this submission-bound. Checked after: 1829 meshes in the scene,
+**0 with no position attribute**, and a worn Mk III with all 37 plates drawable.
