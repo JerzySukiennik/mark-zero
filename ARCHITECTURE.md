@@ -674,3 +674,39 @@ Two things it is deliberately **not**:
 | stairwell | 1 901 013 | 1 901 013 (deliberately unchanged) |
 | living room | 1 524 419 | 1 524 419 |
 | in flight | 1 508 518 | 1 508 518 |
+
+### The town was the same problem as the workshop
+
+The worst viewpoint in the game is from the air looking back at the headland: **2570 draw
+calls** a frame with only twelve instanced meshes in the scene, which means about two and a
+half thousand individual objects were in view. The same bake fixes it.
+
+    shop      1158 ->  198 meshes   1000 baked into 40 batches   tris 33054 -> 33054   box 0.0000
+    interior   360 ->   54 meshes    320 baked into 14 batches   tris  5481 ->  5481   box 0.0000
+    town      2878 ->  521 meshes   2366 baked into  9 batches   tris 54575 -> 54575   box 0.0000
+    fair       792 ->  259 meshes    554 baked into 21 batches   tris 30774 -> 30774   box 0.0000
+    donut      120 ->   59 meshes     70 baked into  9 batches   tris 42196 -> 42196   box 0.0000
+
+4310 meshes into 93 batches, and the geometry invariant holds everywhere: identical triangle
+counts, world bounding box unmoved.
+
+Looking at the land from the air: **2570 -> 1800 draw calls**. Triangles went *up* slightly
+(2 161 544 -> 2 214 993) because a batch is culled as one object, so geometry that used to
+be frustum-culled individually now draws. That is the trade this makes on purpose — 770
+fewer submissions for 53 000 more triangles is a good deal on a scene that is CPU-bound,
+and a bad one on a scene that is not. It was measured before it was believed.
+
+### One that was reverted: tiling the near vegetation
+
+`vegNear` is a single InstancedMesh over 6100 x 2720 m, and an InstancedMesh is culled as
+one object against the whole cluster — so 617 816 triangles of shrubs are drawn no matter
+which way you face. Cutting it into a 4 x 2 grid of tiles is free of visual change (the
+placement is `valueNoise(gx, gz)`, a function of world position, so lattice-aligned tiles
+reproduce it exactly) and it did help where expected: the living room dropped 21% of its
+triangles and the sea view 194 000.
+
+It also made the **workshop worse** — 545 551 to 768 703 triangles — which is precisely the
+place that was reported as lagging, and the cause was not established. Reverted. The rule
+from earlier in this file applies to my own good ideas too: an optimisation that cannot be
+shown to help does not ship, and one that can be shown to hurt where it matters ships even
+less.

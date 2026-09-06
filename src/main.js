@@ -222,7 +222,16 @@ async function main() {
       // 3, not 6: at six the workshop still left 120 mergeable meshes sitting in groups
       // too small to qualify, which is 120 draw calls for nothing.
       const off = new URLSearchParams(location.search).has('nomerge');
-      for (const [name, grp] of [['shop', mal.shop], ['interior', mal.interior]]) {
+      const w = ctx.world;
+      /* The town, the fairground and the donut lot are the same shape of problem as the
+       * workshop: hundreds of small static props, each its own submission. Measured from
+       * the air looking back at the headland — the worst viewpoint in the game — 2570 draw
+       * calls a frame with only twelve instanced meshes in the scene, which means about
+       * two and a half thousand individual objects were in view. */
+      for (const [name, grp] of [['shop', mal.shop], ['interior', mal.interior],
+                                 ['town', w && w.town && w.town.root],
+                                 ['fair', w && w.fair && w.fair.root],
+                                 ['donut', w && w.donut && w.donut.root]]) {
         if (!grp || off) continue;
         rep[name] = mergeStatic(grp, 3);
         console.log('[MARK ZERO] ' + name + ' meshes ' + rep[name].before + ' -> ' +
