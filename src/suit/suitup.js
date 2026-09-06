@@ -65,8 +65,19 @@ export default {
      * pieces to leave lying about — so it keeps its own doff. That makes this exactly the
      * Mk III today, and correct for anything plate-built added later. */
     const scatter = new ScatteredSuit(ctx);
-    // SELF_DON is the local table above — suit/ must not import flight/, see the note there.
-    const comesApart = id => !!SELF_DON[id] && id !== 'mk50';
+    /* EVERY PLATE ARMOUR COMES APART. Only the nano one does not.
+     *
+     * This started as "self-donning armours only", which is one entry — the Mk III — and
+     * that turned out to be a trap rather than a rule. Jurek pressed X on a Mark he had
+     * picked from the tablet and got the old undressing and an instant re-don, because the
+     * armour he was wearing was not the one entry. From the outside "it doesn't work" is
+     * indistinguishable from "it isn't implemented", and there is no reason a Mk I or a Mk
+     * XLII should NOT fall to pieces: they are all plates on a frame.
+     *
+     * The Mk L is the single exception, and for a reason you can see: it is nanotech. It
+     * flows back into the reactor and leaves nothing lying on the floor, so it keeps its own
+     * doff. */
+    const comesApart = id => !!id && id !== 'mk50';
     let viewBefore = null;     // the view the player chose, restored when the ritual ends
     let viewBeforeDoff = null; // ...and the same for stepping out of an armour
     let gantry = null;
