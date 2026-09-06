@@ -457,3 +457,34 @@ the wave field is evaluated in WORLD space in the vertex shader, so a disc slidi
 fraction of a metre per frame moves every vertex to a new place on the wave and swims. On a
 grid the sample points are stable. Measured after: nearest vertex 0.1 m at home, 0.0 m at
 3.6 km out.
+
+
+### Two optimisations that were removed again, and why
+
+Both were added in the same pass as the material dedup and both were taken back out. They
+are written down because they look obviously correct and are not.
+
+**A model prefetch.** The five armour `.glb` files are 5.7-8.4 MB each and are fetched only
+when one is chosen, so a serial background fetch 2.5 s after boot looked like free money:
+turn the suit-up from a download into a parse. What it actually did was compete with the
+one download the player is waiting on. In `tools/opt-check.html` a `wear('mk3')` issued
+shortly after boot produced **no rig at all inside a twenty-second wait**, while an
+identical `wear('mk3')` later in the same run worked — and the prefetch starts with the
+same file that first wear is asking for. Removing it restored the boot-time wear
+immediately (`rig=true, plates=37`). Thirty-six megabytes on every page load for an
+unproven gain, in front of the thing the player is actually waiting for, is a bad trade.
+
+**A synchronous shader compile in `equip()`.** `renderer.compile(rig.root, ...)` blocks, and
+under a software rasteriser the rig never appeared inside a twenty-second wait — a far
+worse stall than the hitch it was meant to remove, and exactly what a weak GPU would do to
+a player. Its async sibling is worse still: `await compileAsync(...)` hung `equip()` outright,
+because it resolves off a WebGL fence that a hidden or throttled tab never advances, and the
+game was left with no suit and no error. What survives is fire-and-forget: the warm-up is
+started and never waited on, so it can only help.
+
+The general lesson, and the reason the numbers in the table above are worth more than the
+ideas that produced them: **an optimisation that cannot be measured cannot be shipped.**
+GPU stall timings were not measurable in this session's browser pane at all — the same
+suit-up measured 204 ms and 1190 ms on consecutive runs — so every change that rested only
+on those numbers was reverted, and only the graph facts (material counts, light counts,
+vertex spacing) and the reproducible living-room figure were kept.

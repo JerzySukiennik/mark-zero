@@ -227,11 +227,14 @@ async function main() {
       .then(() => console.log('[MARK ZERO] shaders warmed'))
       .catch(() => {});
   }
-  setTimeout(async () => {
-    for (const id of ['mk3', 'mk1', 'mk2', 'mk42', 'mk50', 'pilot']) {
-      try { await fetch('models/' + id + '.glb', { cache: 'force-cache' }); } catch (e) { /* offline is fine */ }
-    }
-  }, 2500);
+  /* NO MODEL PREFETCH. There was one here: a serial fetch of all five armour .glb files
+   * (36 MB) two and a half seconds after boot, meant to turn a suit-up from a download
+   * into a parse. It could not be shown to help, and it could be shown to hurt — in the
+   * headless rig a wear() issued shortly after boot produced no rig at all inside a
+   * twenty-second wait, while an identical wear() later in the same run worked, and the
+   * prefetch starts with the same file that first wear is asking for. Thirty-six megabytes
+   * of traffic on every page load for an unproven gain, competing with the one download
+   * the player is actually waiting on, is a bad trade. */
 
   const loop = new Loop(ctx, MODULES);
   const MZ = installDebug(ctx, loop);

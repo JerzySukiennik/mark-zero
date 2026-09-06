@@ -91,27 +91,28 @@ export default {
         rig.root.traverse(o => { if (o.isMesh) { o.castShadow = true; o.receiveShadow = true; } });
         api.setPose('stand', true);
 
-        /* COMPILE THE ARMOUR BEFORE IT IS EVER DRAWN.
+        /* WARM THE ARMOUR'S SHADERS, BUT NEVER WAIT FOR IT.
          *
-         * An armour is ~120 meshes across five materials, and three builds a material's
-         * shader program the first time it actually renders — inside that frame. Measured:
-         * the first frame after a Mk III appeared cost 204 ms against a 7.9 ms steady
-         * state. That is the hitch at the start of every suit-up, and pre-fetching the
-         * .glb does nothing for it, because it is a GPU compile and not a download.
+         * An armour is ~120 meshes and three builds a material's program the first time it
+         * actually renders, inside that frame — so the first frame of a suit-up pays for
+         * all of it at once. Warming it up here is the right idea and both obvious ways of
+         * doing it are traps, so this is deliberately the timid version:
          *
-         * SYNCHRONOUS compile(), not compileAsync, and the choice is deliberate. The async
-         * form resolves off a WebGL fence that a throttled or hidden tab never advances:
-         * awaiting it hung equip() outright the first time it happened, leaving the game
-         * with no suit and no error. compile() blocks, but it blocks HERE — inside the
-         * async equip, while the loading beat is already on screen — instead of on the
-         * first frame of the suit-up animation, which is the frame the player is watching.
+         *   await compileAsync(...)   HUNG equip() outright. It resolves off a WebGL fence
+         *                             that a hidden or throttled tab never advances: no
+         *                             suit, no error, a dead game.
+         *   compile(rig.root, ...)    Blocks. Measured under a software rasteriser, the
+         *                             rig never appeared at all inside a twenty-second
+         *                             wait — a stall far worse than the hitch it was
+         *                             meant to remove, and exactly what a weak GPU would
+         *                             do to a player.
+         *
+         * Fire and forget. If it finishes before the first frame the hitch is gone; if it
+         * does not, the frame pays for it as it always did. Nothing can be made worse by a
+         * warm-up nobody waits on.
          */
-        // JUST THE RIG. compile(ctx.scene, ...) walks every mesh in the world — thousands
-        // of them — and synchronously compiling that during a suit-up locked the page hard
-        // enough that the harness gave up on it twice. The armour is ~120 meshes and five
-        // materials; that is the only thing here that has never been drawn before.
-        if (ctx.renderer.compile) {
-          try { ctx.renderer.compile(rig.root, ctx.camera, ctx.scene); }
+        if (ctx.renderer.compileAsync) {
+          try { ctx.renderer.compileAsync(rig.root, ctx.camera, ctx.scene).catch(() => {}); }
           catch (e) { /* a failed warm-up is a slow frame, not a broken game */ }
         }
 
@@ -214,11 +215,42 @@ export default {
           // where the opening is, on every armour, with no per-armor numbers.
           const ah = api.pivots.piv_head, bh = bodyRig.pivots && bodyRig.pivots.piv_head;
           if (ah && bh) {
+            /* FIT THE HEAD TO THE HELMET, not just to the armour's height.
+             *
+             * The boy is scaled so he is the right height for the suit, and his head is
+             * then a real 13-year-old's head at that scale — which is bigger than the
+             * cavity inside a helmet, because a helmet is a shell around a head and not a
+             * head. Aligning the two pivots centres him correctly and he still pushes out
+             * through the cheeks and the crown: "opening the faceplate just shows my head,
+             * because I stick out through the armour".
+             *
+             * Measured per armour rather than fudged with one constant, because the five
+             * shells are different shapes — the Mk I is a welded box with a deep interior,
+             * the Mk L is skin-tight. Take the helmet plate's own bounding box, take the
+             * head's, and shrink the head until it fits inside with a margin. Clamped so a
+             * missing or odd-shaped plate can never produce a pinhead or a giant. */
+            bh.scale.setScalar(1);
+            bh.updateWorldMatrix(true, false);
+            const headBox = new THREE.Box3();
+            for (const m of headMeshes) headBox.expandByObject(m);
+            const shell = api.rig && api.rig.plates && api.rig.plates.helmet;
+            let fit = 1;
+            if (shell && !headBox.isEmpty()) {
+              const helmBox = new THREE.Box3().setFromObject(shell);
+              const hs = headBox.getSize(new THREE.Vector3());
+              const ss = helmBox.getSize(new THREE.Vector3());
+              if (hs.x > 1e-4 && hs.y > 1e-4 && hs.z > 1e-4) {
+                fit = Math.min(ss.x / hs.x, ss.y / hs.y, ss.z / hs.z) * 0.82;
+                fit = Math.max(0.55, Math.min(1, fit));
+              }
+            }
+            bh.scale.setScalar(fit);
             ah.updateWorldMatrix(true, false);
             bh.updateWorldMatrix(true, false);
             const a = new THREE.Vector3().setFromMatrixPosition(ah.matrixWorld);
             const b = new THREE.Vector3().setFromMatrixPosition(bh.matrixWorld);
             bodyGroup.position.add(a.sub(b));
+            api._headFit = fit;
           }
           if (!faceLight) {
             // The interface is the only thing lighting his face. Cool, weak, and short
@@ -233,6 +265,10 @@ export default {
         } else {
           bodyRig.root.traverse(o => { if (o.isMesh) o.visible = true; });
           bodyGroup.position.set(0, 0, 0);
+          // Undo the helmet fit, or the whole boy walks around with a shrunken head the
+          // next time he is shown outside a suit.
+          const bh2 = bodyRig.pivots && bodyRig.pivots.piv_head;
+          if (bh2) bh2.scale.setScalar(1);
           if (faceLight) faceLight.visible = false;
           if (!wantBody) bodyGroup.visible = false;
         }
