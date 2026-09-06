@@ -273,3 +273,31 @@ export function mergeStatic(root, minGroup = 6, opts = {}) {
     boxShiftM: dBox < 0 ? null : +dBox.toFixed(4),
   };
 }
+
+/**
+ * Stop small objects casting shadows.
+ *
+ * The sun's shadow map covers a ±240 m box at 2048 px, which is about 0.23 m of world per
+ * texel. A half-metre bracket therefore casts a shadow two texels across — invisible — and
+ * pays a full extra draw call for it, on every frame, for as long as it is anywhere in the
+ * shadow frustum. Census of the casters before this: 194 under 0.25 m, 203 between 0.25 and
+ * 0.5, 215 between 0.5 and 1, against 1692 in the 2–5 m band that actually reads.
+ *
+ * Merged batches are unaffected — a batch's bounding radius is the whole batch — so this
+ * only ever catches things that were too small to matter on their own.
+ *
+ * @returns {{checked:number, disabled:number}}
+ */
+export function trimShadowCasters(root, minRadius = 0.6) {
+  let checked = 0, disabled = 0;
+  root.traverse(o => {
+    if (!o.isMesh || !o.castShadow || !o.geometry) return;
+    checked++;
+    if (!o.geometry.boundingSphere) o.geometry.computeBoundingSphere();
+    const bs = o.geometry.boundingSphere;
+    if (!bs) return;
+    const s = Math.max(Math.abs(o.scale.x), Math.abs(o.scale.y), Math.abs(o.scale.z));
+    if (bs.radius * s < minRadius) { o.castShadow = false; disabled++; }
+  });
+  return { checked, disabled };
+}

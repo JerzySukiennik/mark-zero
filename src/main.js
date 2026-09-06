@@ -17,7 +17,7 @@
 //     and time-limited; a failure writes a visible on-screen error and the game boots
 //     without that module.
 
-import { dedupeMaterials, mergeStatic } from './engine/dedupe.js';
+import { dedupeMaterials, mergeStatic, trimShadowCasters } from './engine/dedupe.js';
 import * as THREE from 'three';
 import { createRenderer } from './engine/renderer.js';
 import { buildEnvironment } from './engine/env.js';
@@ -239,6 +239,15 @@ async function main() {
                     rep[name].batches + ' batches)');
       }
       ctx.bakeReport = Object.assign(ctx.bakeReport || {}, { merge: rep });
+      /* And stop the leftovers casting shadows they are too small to show. The sun's map
+       * is ~0.23 m per texel, so anything under about half a metre casts two texels and
+       * costs a whole extra draw for it. Batches keep casting — a batch is big. */
+      if (!off && ctx.world && ctx.world.root) {
+        const t = trimShadowCasters(ctx.world.root, 0.6);
+        ctx.bakeReport.shadows = t;
+        console.log('[MARK ZERO] shadow casters ' + t.checked + ' -> ' +
+                    (t.checked - t.disabled) + ' (' + t.disabled + ' too small to show)');
+      }
     }
   } catch (e) {
     ctx.bakeReport = Object.assign(ctx.bakeReport || {}, { merge: 'ERR ' + e.message });

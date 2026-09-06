@@ -794,3 +794,23 @@ it is safe there and nowhere else:
 Triangles rise a little where a batch culls as one object; that is the trade, and it is the
 right way round on a scene this submission-bound. Checked after: 1829 meshes in the scene,
 **0 with no position attribute**, and a worn Mk III with all 37 plates drawable.
+
+### A shadow trim that turned out to be almost unnecessary
+
+The caster census early in the session counted 612 shadow casters under a metre — bracket-
+sized things whose shadow is two texels on a map that resolves 0.23 m. `trimShadowCasters`
+switches those off at boot.
+
+Measured after it shipped: **24 disabled out of 711 checked.** The 612 were absorbed by the
+merges — a batch's bounding radius is the whole batch, so the small things stopped existing
+as separate casters when they stopped existing as separate meshes. The pass is kept because
+it costs one boot-time walk and stays correct as content is added, not because it bought
+anything today. Recorded so nobody re-derives the 612 figure from an old census and expects
+a win from it.
+
+### A caution about the cost probe
+
+`MZ.goto()` moves the PLAYER. If the probe has already entered flight, the camera stays with
+the flight model and every subsequent "living / stairs / workshop" reading is really the same
+airborne frame — three identical numbers in a row is the tell. Measure the indoor spots
+BEFORE `MZ.fly()`, which is what the valid figures in the table above were taken with.
