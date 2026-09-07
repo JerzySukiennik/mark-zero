@@ -16,7 +16,7 @@
 import * as THREE from 'three';
 import { Gantry, SuitStage } from './gantry.js';
 import { playerStance } from './suit.js';
-import { ScatteredSuit } from './scatter.js';
+import { ScatteredSuit, OpeningShell } from './scatter.js';
 import { meshesByPivot, PLATE_PIVOT } from './rig.js';
 import mk1 from './sequences/mk1.js';
 import mk2 from './sequences/mk2.js';
@@ -65,19 +65,22 @@ export default {
      * pieces to leave lying about — so it keeps its own doff. That makes this exactly the
      * Mk III today, and correct for anything plate-built added later. */
     const scatter = new ScatteredSuit(ctx);
-    /* EVERY PLATE ARMOUR COMES APART. Only the nano one does not.
+    const shell = new OpeningShell(ctx);
+    /* THREE WAYS AN ARMOUR COMES OFF, one per kind of armour. Jurek's rule, verbatim:
      *
-     * This started as "self-donning armours only", which is one entry — the Mk III — and
-     * that turned out to be a trap rather than a rule. Jurek pressed X on a Mark he had
-     * picked from the tablet and got the old undressing and an instant re-don, because the
-     * armour he was wearing was not the one entry. From the outside "it doesn't work" is
-     * indistinguishable from "it isn't implemented", and there is no reason a Mk I or a Mk
-     * XLII should NOT fall to pieces: they are all plates on a frame.
+     *   Mk I, II, III   it opens at the front, floats free, and comes back onto him FROM
+     *                   BEHIND. The suit stays one object the whole time.
+     *   Mk XLII         it bursts into its plates, they lie on the floor, and each one flies
+     *                   home on its own little repulsor. Only this one.
+     *   Mk L            nanotech: it flows off him and back on again, leaving nothing.
      *
-     * The Mk L is the single exception, and for a reason you can see: it is nanotech. It
-     * flows back into the reactor and leaves nothing lying on the floor, so it keeps its own
-     * doff. */
-    const comesApart = id => !!id && id !== 'mk50';
+     * This was briefly "every plate armour bursts", which was wrong for four of the five and
+     * is why he saw the Mark III explode when it should have opened. The behaviour belongs to
+     * the ARMOUR, not to a convenience flag. */
+    const DOFF_STYLE = {
+      mk1: 'open', mk2: 'open', mk3: 'open', mk42: 'apart', mk50: 'nano',
+    };
+    const doffStyle = id => DOFF_STYLE[id] || 'open';
     let viewBefore = null;     // the view the player chose, restored when the ritual ends
     let viewBeforeDoff = null; // ...and the same for stepping out of an armour
     let gantry = null;
@@ -184,7 +187,7 @@ export default {
         // The ring is the machine now: it opens for the whole sequence and shuts after.
         const ring = ctx.world && ctx.world.ring;
         if (ring) ring.set(1);
-        scatter.cancel();          // a new Mark: whatever was scattered is not coming back
+        scatter.cancel(); shell.cancel();   // a new Mark: the old one is not coming back
         if (active) self.cancel();
 
         // Nobody else may drive the armour while the ritual is running. flight/ takes
@@ -438,10 +441,13 @@ export default {
         return;
       }
       const nano = ctx.state.armor === 'mk50' && suit.nano;
-      const apart = comesApart(ctx.state.armor);
-      // A scattering doff is short: it is a burst, not a slow undressing.
-      doffing = { t: 0, dur: nano ? 1.1 : (apart ? 0.35 : 1.9), nano: !!nano,
-                  apart, id: ctx.state.armor };
+      const style = doffStyle(ctx.state.armor);
+      const apart = style === 'apart';
+      const opens = style === 'open';
+      /* Both of the new styles are short here, because the interesting part happens AFTER
+       * this timer: the burst, or the shell swinging open. Only the old fade needed 1.9 s. */
+      doffing = { t: 0, dur: nano ? 1.1 : 0.35, nano: !!nano,
+                  apart, opens, style, id: ctx.state.armor };
       self.doffing = true;
       /* The whole boy, from the first frame of the doff — not just his face.
        * The plates are about to come off around him, and if only the head is showing what
@@ -482,6 +488,17 @@ export default {
         suit.followPlayer = true;
         scatter.recall(stand ? stand.pos : suit.root.position);
         if (ctx.ui) ctx.ui.say('RECALLING.');
+        return;
+      }
+      if (shell.active) {
+        // Same idea for the armour that stayed in one piece: put the rig on him so every
+        // plate's home is where he is, then let the shell fly in behind him and close.
+        if (shell.phase === 'flying' || shell.phase === 'closing') return;
+        const stand = playerStance(ctx);
+        if (stand) suit.place(stand.pos, stand.yaw);
+        suit.followPlayer = true;
+        shell.recall(stand ? stand.pos : suit.root.position, stand ? stand.yaw : 0);
+        if (ctx.ui) ctx.ui.say('COMING.');
         return;
       }
 
@@ -527,12 +544,12 @@ export default {
      * in pieces on top of the player and re-entry landed four metres out.
      *
      * suit/ emits this whenever a rig is actually installed, so it is the honest signal. */
-    ctx.bus.on('suit:equipped', () => scatter.cancel());
+    ctx.bus.on('suit:equipped', () => { scatter.cancel(); shell.cancel(); });
 
     ctx.bus.on('restart', () => {
       // Pieces on the floor do not survive a reset: put them back on the rig before anything
       // else touches it, or the next armour is built out of plates this still owns.
-      scatter.cancel();
+      scatter.cancel(); shell.cancel();
       { const ring = ctx.world && ctx.world.ring; if (ring) ring.set(0); }
       if (ctx.suit) ctx.suit.parked = null;
       boyStepIn();
@@ -564,6 +581,11 @@ export default {
         scatter.update(dt, st ? st.pos : null);
         if (!scatter.active) ctx.bus.emit('suit:reenter');
       }
+      if (shell.active) {
+        const st = playerStance(ctx);
+        shell.update(dt, st ? st.pos : null, st ? st.yaw : 0);
+        if (!shell.active) ctx.bus.emit('suit:reenter');
+      }
 
       if (doffing) {
         doffing.t += dt;
@@ -574,7 +596,7 @@ export default {
             // Nano retreats to the reactor: the same edge that spread outwards, run back.
             suit.nano.setActive(true);
             suit.nano.setEdge(1.6 - k * 2.6);
-          } else if (doffing.apart) {
+          } else if (doffing.apart || doffing.opens) {
             /* Nothing to animate here: the plates stay on until the moment they let go, and
              * then scatter.js throws all of them at once. Hiding them head-downward first
              * would be the armour vanishing and a pile appearing, which is not the same
@@ -628,6 +650,12 @@ export default {
              * actually is on the body. `parked` is still set, so the boy detaches and walks
              * away as he does for any other armour; the difference is that there is no shell
              * standing there to walk back into, only pieces on the floor. */
+            if (doffing.opens && suit.rig) {
+              /* IT OPENS AND FLOATS. The shell has just been stood on its feet above, which
+               * is where it should hang, so this takes that as its anchor. */
+              shell.begin(suit.rig, suit.root.position.clone(), suit.root.rotation.y);
+              if (ctx.ui) ctx.ui.say('SUIT OPEN. PRESS X TO CALL IT BACK.');
+            }
             if (doffing.apart && suit.rig) {
               _sp.setFromMatrixPosition(
                 (suit.rig.pivots.piv_chest || suit.rig.pivots.piv_hips || suit.root).matrixWorld);
@@ -640,6 +668,7 @@ export default {
             suit.parked = {
               id: doffing.id,
               apart: !!doffing.apart,
+              opens: !!doffing.opens,
               name: SPEC_NAMES[doffing.id] || String(doffing.id).toUpperCase(),
               pos: suit.root.position.clone(),
             };

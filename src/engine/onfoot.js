@@ -754,7 +754,9 @@ export default {
       /* An armour lying in pieces has no shell to walk into: it is called with X from
        * wherever you are (suit/scatter.js). Offering "hold F" over a heap of plates would be
        * a prompt for something that cannot happen. */
-      if (parked && parked.apart) { /* nothing to walk into */ }
+      // An armour in pieces, or one hanging open in the air, is called with X from
+      // wherever you are — there is no shell standing still to walk into.
+      if (parked && (parked.apart || parked.opens)) { /* nothing to walk into */ }
       else if (parkedNear && !chosen && doffGrace <= 0) {
         const inRange = true;
         const holding = input && input.action('interact') && !st.paused;

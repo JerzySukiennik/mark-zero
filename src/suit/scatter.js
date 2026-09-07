@@ -300,3 +300,165 @@ export class ScatteredSuit {
  * `ctx.state.armor` should stay null until `progress` reaches 1 — you are not wearing a suit
  * that is lying on the floor.
  * ──────────────────────────────────────────────────────────────────────────────────────── */
+
+
+/* ────────────────────────────────────────────────────────────────────────────────────────
+ * THE OTHER WAY AN ARMOUR COMES OFF: IT OPENS, AND IT FLIES.
+ *
+ * Jurek's rule, once the three behaviours were separated: only the Mark XLII bursts into
+ * pieces. The Marks I to III "open at the front, fly up, and come onto the player from
+ * behind" — the suit stays ONE object the whole time. It splits down the front, the player
+ * walks out of it, and it hangs there in the air; call it and it swings round behind him and
+ * closes on him from the back.
+ *
+ * Same machinery as ScatteredSuit and for the same reasons (see the note at the top of this
+ * file): every plate is driven by world transform through rig.setPlateWorld, and handed back
+ * with resetPlate when it is home. The difference is that here the plates move TOGETHER —
+ * one shell transform for all of them — with a small extra swing on the front pieces only.
+ * ──────────────────────────────────────────────────────────────────────────────────────── */
+
+export const SHELL = {
+  openTime: 0.9,      // seconds for the front to swing open and the shell to rise
+  hoverUp: 0.55,      // metres it floats above where it was standing
+  hoverBack: 0.9,     // and how far it drifts back off the player as he steps out
+  openSwing: 0.62,    // radians the front plates hinge outwards
+  openPush: 0.30,     // metres they also move away from the chest, so they clear the body
+  approach: 1.55,     // metres BEHIND the player it lines up before closing
+  flyTime: 1.15,      // seconds to cross from wherever it was to that point
+  closeTime: 0.75,    // and to move in and shut
+  bob: 0.06,          // idle float while it waits
+};
+
+/* The plates that make up the FRONT of the armour — the half that opens. Everything else is
+ * the back and the limbs, which travel with the shell but do not swing. From
+ * models/CONTRACT.md's plate list. */
+const FRONT_PLATES = new Set([
+  'chest', 'reactor', 'abdomen', 'ribL', 'ribR', 'pelvis', 'beltL', 'beltR',
+  'collarL', 'collarR', 'faceplate', 'thighL', 'thighR', 'shinL', 'shinR', 'kneeL', 'kneeR',
+]);
+
+const _sp2 = new THREE.Vector3();
+const _sq2 = new THREE.Quaternion();
+const _off2 = new THREE.Vector3();
+const _axis = new THREE.Vector3();
+
+export class OpeningShell {
+  constructor(ctx) {
+    this.ctx = ctx;
+    this.rig = null;
+    this.phase = 'idle';       // idle | opening | waiting | flying | closing
+    this.t = 0;
+    this.names = [];
+    this.anchor = new THREE.Vector3();   // where the empty shell hangs
+    this.yaw = 0;
+    this.from = new THREE.Vector3();
+    this.fromYaw = 0;
+  }
+
+  get active() { return this.phase !== 'idle'; }
+  /** 1 once it is fully back on. suitup/ waits on this exactly as it does for the scatter. */
+  get progress() { return this.phase === 'idle' ? 1 : 0; }
+
+  begin(rig, standPos, yaw) {
+    if (!rig) return false;
+    this.rig = rig;
+    this.names = Object.keys(rig.plates || {}).filter(n => rig.hasPlate(n));
+    if (!this.names.length) return false;
+    this.anchor.copy(standPos);
+    this.yaw = yaw || 0;
+    this.phase = 'opening';
+    this.t = 0;
+    return true;
+  }
+
+  /** Call it back to the player. It lines up behind him first, then closes forward onto him. */
+  recall(playerPos, playerYaw) {
+    if (this.phase !== 'waiting' && this.phase !== 'opening') return false;
+    this.target = this.target || new THREE.Vector3();
+    this.from.copy(this.anchor);
+    this.fromYaw = this.yaw;
+    this.playerYaw = playerYaw || 0;
+    this.phase = 'flying';
+    this.t = 0;
+    return true;
+  }
+
+  update(dt, playerPos, playerYaw) {
+    if (this.phase === 'idle' || !this.rig) return;
+    /* The flight home needs to know where he IS. playerStance() can come back null for a
+     * frame — during a mode change, or before onfoot has a position — and a null here used
+     * to throw out of the module update, which loop.js swallows: the armour froze in mid-air
+     * and every armour tested after it silently did nothing. Hold station instead. */
+    if ((this.phase === 'flying' || this.phase === 'closing') && !playerPos) return;
+    this.t += dt;
+    const rig = this.rig;
+    let open = 0;              // 0 shut, 1 wide open
+    let lift = 0;
+
+    if (this.phase === 'opening') {
+      const k = Math.min(1, this.t / SHELL.openTime);
+      open = k; lift = k;
+      if (k >= 1) { this.phase = 'waiting'; this.t = 0; }
+    } else if (this.phase === 'waiting') {
+      open = 1; lift = 1;
+    } else if (this.phase === 'flying') {
+      /* Behind him, facing the way he faces: the armour has to arrive on his back, so it
+       * lines up on the far side of him first and only then moves in. */
+      const k = Math.min(1, this.t / SHELL.flyTime);
+      const e = k * k * (3 - 2 * k);
+      const py = playerYaw !== undefined ? playerYaw : this.playerYaw;
+      _off2.set(Math.sin(py), 0, Math.cos(py)).multiplyScalar(SHELL.approach);
+      _sp2.copy(playerPos).add(_off2);
+      this.anchor.lerpVectors(this.from, _sp2, e);
+      this.anchor.y += Math.sin(k * Math.PI) * 0.7;
+      this.yaw = this.fromYaw + (py - this.fromYaw) * e;
+      open = 1; lift = 1;
+      if (k >= 1) { this.phase = 'closing'; this.t = 0; this.from.copy(this.anchor); }
+    } else if (this.phase === 'closing') {
+      const k = Math.min(1, this.t / SHELL.closeTime);
+      const e = k * k * (3 - 2 * k);
+      const py = playerYaw !== undefined ? playerYaw : this.playerYaw;
+      this.anchor.lerpVectors(this.from, playerPos, e);
+      this.yaw = py;
+      open = 1 - e; lift = 1 - e;
+      if (k >= 1) { this.finish(); return; }
+    }
+
+    // The shell's own transform, and the idle float while it waits.
+    const bob = this.phase === 'waiting' ? Math.sin(this.ctx.time * 1.7) * SHELL.bob : 0;
+
+    for (let i = 0; i < this.names.length; i++) {
+      const name = this.names[i];
+      if (!rig.plateHomeWorld(name, _p, _q)) continue;
+      /* Home is computed from where the RIG is; the shell hangs somewhere else. Move each
+       * plate by the difference, so the whole armour travels as one rigid thing. */
+      _p.y += lift * SHELL.hoverUp + bob;
+      _off2.set(Math.sin(this.yaw), 0, Math.cos(this.yaw)).multiplyScalar(lift * SHELL.hoverBack);
+      _p.add(_off2);
+      _d.copy(this.anchor).sub(rig.root.position);
+      _p.add(_d);
+
+      if (open > 0.001 && FRONT_PLATES.has(name)) {
+        // The front hinges outward about the body's vertical axis, left half one way and
+        // right half the other, and pushes forward so it clears the chest.
+        const side = /L$/.test(name) ? 1 : (/R$/.test(name) ? -1 : 0);
+        _axis.set(0, 1, 0);
+        _sq2.setFromAxisAngle(_axis, side * open * SHELL.openSwing);
+        _q.premultiply(_sq2);
+        _off2.set(Math.sin(this.yaw), 0, Math.cos(this.yaw))
+          .multiplyScalar(-open * SHELL.openPush);
+        _p.add(_off2);
+      }
+      rig.setPlateWorld(name, _p, _q);
+    }
+  }
+
+  finish() {
+    if (this.rig) for (const n of this.names) this.rig.resetPlate(n);
+    this.names.length = 0;
+    this.phase = 'idle';
+    this.rig = null;
+  }
+
+  cancel() { this.finish(); }
+}
