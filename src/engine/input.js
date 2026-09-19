@@ -19,6 +19,8 @@ export function isTyping(target) {
   return t === 'INPUT' || t === 'TEXTAREA' || t === 'SELECT' || target.isContentEditable === true;
 }
 
+import { PadInput } from './gamepad.js';
+
 export const BINDINGS = {
   // on foot
   forward: ['KeyW', 'ArrowUp'],
@@ -70,6 +72,17 @@ export class Input {
     this.enabled = true;
     this._onLock = null;
 
+    /* THE CONTROLLER. Polled once per step in beginStep(), never from an event — the
+     * Gamepad API has no events for sticks, and a pad read at a different rate from the
+     * simulation produces a suit that accelerates differently on different machines.
+     *
+     * `mouseHeld` exists because the pad's fire button and the real mouse both write
+     * `buttons[0]`, which combat/ reads directly. Without remembering which of the two is
+     * actually down, releasing the pad trigger would cancel a held mouse button and the
+     * other way round. */
+    this.pad = new PadInput();
+    this.mouseHeld = [false, false, false];
+
     const PREVENT = new Set([
       'Space', 'ControlLeft', 'AltLeft', 'Tab',
       'ArrowUp', 'ArrowDown', 'ArrowLeft', 'ArrowRight',
@@ -113,10 +126,16 @@ export class Input {
     canvas.addEventListener('mousedown', e => {
       if (e.button < 3) {
         this.buttons[e.button] = true;
+        this.mouseHeld[e.button] = true;
         this.buttonsPressedRaw.add(e.button);
       }
     });
-    addEventListener('mouseup', e => { if (e.button < 3) this.buttons[e.button] = false; });
+    addEventListener('mouseup', e => {
+      if (e.button >= 3) return;
+      this.mouseHeld[e.button] = false;
+      // Only actually release it if the pad is not also holding the trigger.
+      if (!(e.button === 0 && this.pad.fire)) this.buttons[e.button] = false;
+    });
     canvas.addEventListener('contextmenu', e => e.preventDefault());
 
     addEventListener('mousemove', e => {
@@ -154,7 +173,11 @@ export class Input {
   }
 
   // --- polled by the simulation ------------------------------------------------
-  down(code) { return this.enabled && (this.keys.has(code) || this.virtual.has(code)); }
+  // The pad's buttons are key codes (see engine/gamepad.js), so they arrive here and every
+  // binding in BINDINGS works from the controller without another line anywhere else.
+  down(code) {
+    return this.enabled && (this.keys.has(code) || this.virtual.has(code) || this.pad.keys.has(code));
+  }
   // Hold or release a key from a script. Survives focus loss; release it yourself.
   hold(code, on = true) {
     if (on) { this.virtual.add(code); this.pressedRaw.add(code); }
@@ -193,9 +216,38 @@ export class Input {
   button(i) { return this.enabled && !!this.buttons[i]; }
   buttonTapped(i) { return this.buttonsPressed.has(i); }
 
-  axis(pos, neg) { return (this.action(pos) ? 1 : 0) - (this.action(neg) ? 1 : 0); }
+  /* ANALOG BEATS DIGITAL, but only while the stick is actually deflected.
+   *
+   * A keyboard axis is -1, 0 or 1. A stick is everything in between, and that is the whole
+   * reason to play with a pad: half throttle, a gentle drift left, a slow walk. When the
+   * stick is centred this falls straight back to the keys, so a player with a pad plugged
+   * in can still use the keyboard mid-flight without anything fighting him.
+   *
+   * The two named pairs below are the movement axes. Everything else — roll, and anything
+   * bound later — keeps the digital behaviour, which is what those controls want. */
+  axis(pos, neg) {
+    const p = this.pad;
+    if (this.enabled && p.connected) {
+      if (pos === 'forward' && neg === 'back') { if (p.ly !== 0) return -p.ly; }
+      else if (pos === 'KeyW' && neg === 'KeyS') {
+        // Flight: the triggers are the throttle, and they win over the stick because they
+        // are the ones with the resolution. R2 forward, L2 the retro burn.
+        if (p.thrust > 0 || p.retro > 0) return p.thrust - p.retro;
+        if (p.ly !== 0) return -p.ly;
+      } else if ((pos === 'right' && neg === 'left') || (pos === 'KeyD' && neg === 'KeyA')) {
+        if (p.lx !== 0) return p.lx;
+      }
+    }
+    return (this.action(pos) ? 1 : 0) - (this.action(neg) ? 1 : 0);
+  }
 
   consumeMouse() {
+    /* The right stick is ADDED to the mouse delta rather than replacing it, so it goes
+     * through the sensitivity setting, the free-look branch and the aim smoothing without
+     * any of them knowing a controller exists. Holding the stick and nudging the mouse at
+     * the same time does the obvious thing. */
+    const look = this.pad.look(this._padDt);
+    if (look) { this.mouseDX += look.x; this.mouseDY += look.y; }
     const d = { x: this.mouseDX * this.sensitivity, y: this.mouseDY * this.sensitivity };
     this.mouseDX = 0; this.mouseDY = 0;
     return d;
@@ -206,7 +258,16 @@ export class Input {
   // Called once at the TOP of each simulation step: the edge set collected by the DOM
   // since the last step becomes this step's `pressed`. Guarantees a key tapped between
   // two steps is never lost and never seen twice.
-  beginStep() {
+  beginStep(dt) {
+    this._padDt = dt || (1 / 120);
+    this.pad.poll();
+
+    // Pad button edges join the keyboard's, so actionTapped() and tapped() see them too.
+    for (const code of this.pad.pressed) this.pressedRaw.add(code);
+    if (this.pad.firePressed) this.buttonsPressedRaw.add(0);
+    // The trigger and the real mouse both drive button 0; either one holding is enough.
+    this.buttons[0] = this.mouseHeld[0] || this.pad.fire;
+
     this.pressed = this.pressedRaw;
     this.pressedRaw = new Set();
     this.buttonsPressed = this.buttonsPressedRaw;

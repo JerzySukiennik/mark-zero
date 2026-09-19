@@ -42,14 +42,14 @@ export class Loop {
 
       if (this.ctx.menu && this.ctx.menu.open) {
         // The front screen flies its own suit; the simulation is not running behind it.
-        if (this.ctx.input) this.ctx.input.beginStep();
+        if (this.ctx.input) this.ctx.input.beginStep(delta);
         this.ctx.menu.update(delta);
         this.render();
         return;
       }
       if (this.ctx.state.paused) {
         // Paused still consumes input edges, or the Esc that unpauses would be eaten.
-        if (this.ctx.input) this.ctx.input.beginStep();
+        if (this.ctx.input) this.ctx.input.beginStep(delta);
         this.render();
         return;
       }
@@ -75,7 +75,7 @@ export class Loop {
     ctx.dt = dt;
     ctx.time += dt;
     this.steps++;
-    if (ctx.input) ctx.input.beginStep();
+    if (ctx.input) ctx.input.beginStep(dt);
     if (ctx.env && ctx.env.update) {
       // Lighting is not worth crashing the game for — but a throw that happens 120
       // times a second and is swallowed 120 times a second is how a room silently
